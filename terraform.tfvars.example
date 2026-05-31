@@ -1,0 +1,81 @@
+# GeoLang Infrastructure — Example Configuration
+#
+# Copy this file to terraform.tfvars and customize:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Then deploy:
+#   terraform init
+#   terraform apply
+
+# ─── General ──────────────────────────────────────────────────────────────────
+
+aws_region   = "us-east-1"
+project_name = "geolang"
+environment  = "prod"      # dev | staging | prod
+
+# ─── Domain (optional) ───────────────────────────────────────────────────────
+# Uncomment to enable Route53 + ACM certificate for your domain.
+# After apply, set the output name_servers at your domain registrar.
+
+# enable_dns  = true
+# domain_name = "geolang.com"
+
+# ─── Database ────────────────────────────────────────────────────────────────
+# Required when enable_ptolemy = true. Password MUST be set.
+
+db_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"
+
+# db_instance_class    = "db.t4g.micro"   # ~$12/month
+# db_allocated_storage = 20               # GB, auto-scales to 2x
+# db_multi_az          = false            # true for production HA (~2x cost)
+
+# ─── Service Toggles ────────────────────────────────────────────────────────
+# Enable/disable individual services. See profiles/ for pre-built configs.
+
+# enable_ptolemy   = true    # Geodatabase API (needs RDS)
+# enable_tiletopia = true    # 3D Tiles / terrain
+# enable_geokode   = false   # Geocoding
+# enable_itinera   = false   # Routing
+# enable_geolang   = true    # AI agent (includes Letta)
+# enable_viewtopia = true    # Web frontend
+
+# ─── Fargate Sizing ──────────────────────────────────────────────────────────
+# Default sizing for all services. Override per-service with service_overrides.
+#
+# CPU/Memory valid combinations:
+#   256  CPU → 512, 1024, 2048 MB
+#   512  CPU → 1024–4096 MB
+#   1024 CPU → 2048–8192 MB
+#   2048 CPU → 4096–16384 MB
+#   4096 CPU → 8192–30720 MB
+
+# service_defaults = {
+#   cpu           = 256
+#   memory        = 512
+#   desired_count = 1
+# }
+
+# service_overrides = {
+#   geolang = {
+#     cpu    = 1024
+#     memory = 2048
+#   }
+# }
+
+# ─── Container Images ───────────────────────────────────────────────────────
+# Override container images (useful for CI/CD or external registries).
+# If not set, uses ECR repositories created by Terraform.
+
+# container_images = {
+#   ptolemy   = "ghcr.io/geolang/ptolemy:latest"
+#   tiletopia = "ghcr.io/geolang/tiletopia:latest"
+# }
+
+# ─── CDN ──────────────────────────────────────────────────────────────────────
+
+# enable_cdn = true   # CloudFront for tile caching at edge
+
+# ─── Monitoring ──────────────────────────────────────────────────────────────
+
+# log_retention_days        = 30
+# enable_container_insights = true
