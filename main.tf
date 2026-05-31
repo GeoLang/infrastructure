@@ -458,3 +458,117 @@ module "bastion" {
 
   tags = local.tags
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WAF (Web Application Firewall)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "waf" {
+  source = "./modules/waf"
+  count  = var.enable_waf ? 1 : 0
+
+  name_prefix       = local.name_prefix
+  alb_arn           = module.loadbalancer.alb_arn
+  rate_limit        = var.waf_rate_limit
+  blocked_countries = var.waf_blocked_countries
+
+  tags = local.tags
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# ELASTICACHE (Redis)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "cache" {
+  source = "./modules/cache"
+  count  = var.enable_cache ? 1 : 0
+
+  name_prefix           = local.name_prefix
+  vpc_id                = module.networking.vpc_id
+  private_subnet_ids    = module.networking.private_subnet_ids
+  ecs_security_group_id = module.loadbalancer.ecs_security_group_id
+  node_type             = var.cache_node_type
+
+  tags = local.tags
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# EFS (Shared Persistent Storage)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "storage" {
+  source = "./modules/storage"
+  count  = var.enable_efs ? 1 : 0
+
+  name_prefix           = local.name_prefix
+  vpc_id                = module.networking.vpc_id
+  private_subnet_ids    = module.networking.private_subnet_ids
+  ecs_security_group_id = module.loadbalancer.ecs_security_group_id
+
+  tags = local.tags
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECRETS MANAGER
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "secrets" {
+  source = "./modules/secrets"
+  count  = var.enable_secrets ? 1 : 0
+
+  name_prefix = local.name_prefix
+  db_username = var.db_username
+  db_password = var.db_password
+  db_host     = var.enable_database ? module.database[0].address : ""
+  db_port     = var.enable_database ? module.database[0].port : 5432
+  db_name     = var.db_name
+
+  tags = local.tags
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SECURITY (GuardDuty + VPC Flow Logs + ECS Exec)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "security" {
+  source = "./modules/security"
+  count  = var.enable_security ? 1 : 0
+
+  name_prefix        = local.name_prefix
+  vpc_id             = module.networking.vpc_id
+  log_retention_days = 90
+  enable_guardduty   = var.enable_guardduty
+
+  tags = local.tags
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SQS QUEUES (Async Processing)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "queues" {
+  source = "./modules/queues"
+  count  = var.enable_queues ? 1 : 0
+
+  name_prefix = local.name_prefix
+
+  tags = local.tags
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# AWS BACKUP (Disaster Recovery)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+module "backup" {
+  source = "./modules/backup"
+  count  = var.enable_backup && var.enable_database ? 1 : 0
+
+  name_prefix         = local.name_prefix
+  rds_arn             = module.database[0].arn
+  efs_arn             = var.enable_efs ? module.storage[0].file_system_arn : ""
+  retention_days      = var.backup_retention_days
+  enable_cross_region = var.enable_cross_region_backup
+  dr_region           = var.dr_region
+
+  tags = local.tags
+}

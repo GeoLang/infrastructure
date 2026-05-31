@@ -96,6 +96,53 @@ output "autoscaling_enabled" {
   value       = var.enable_autoscaling
 }
 
+# ─── WAF ──────────────────────────────────────────────────────────────────────
+
+output "waf_web_acl_id" {
+  description = "WAF Web ACL ID"
+  value       = var.enable_waf ? module.waf[0].web_acl_id : "WAF disabled"
+}
+
+# ─── ElastiCache ─────────────────────────────────────────────────────────────
+
+output "redis_endpoint" {
+  description = "Redis endpoint URL"
+  value       = var.enable_cache ? module.cache[0].connection_url : "Redis disabled"
+}
+
+# ─── EFS ──────────────────────────────────────────────────────────────────────
+
+output "efs_file_system_id" {
+  description = "EFS file system ID"
+  value       = var.enable_efs ? module.storage[0].file_system_id : "EFS disabled"
+}
+
+# ─── Security ────────────────────────────────────────────────────────────────
+
+output "guardduty_detector_id" {
+  description = "GuardDuty detector ID"
+  value       = var.enable_security ? module.security[0].guardduty_detector_id : "Security module disabled"
+}
+
+output "vpc_flow_log_group" {
+  description = "VPC Flow Logs CloudWatch log group"
+  value       = var.enable_security ? module.security[0].flow_log_group : "Security module disabled"
+}
+
+# ─── SQS Queues ──────────────────────────────────────────────────────────────
+
+output "sqs_queue_urls" {
+  description = "SQS queue URLs for async processing"
+  value       = var.enable_queues ? module.queues[0].queue_urls : {}
+}
+
+# ─── Backup ──────────────────────────────────────────────────────────────────
+
+output "backup_vault_name" {
+  description = "AWS Backup vault name"
+  value       = var.enable_backup && var.enable_database ? module.backup[0].vault_name : "Backup disabled"
+}
+
 # ─── Deployment Commands ─────────────────────────────────────────────────────
 
 output "deploy_commands" {

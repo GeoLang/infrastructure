@@ -171,6 +171,19 @@ enable_cdn       = true    # CloudFront CDN
 enable_dns       = true    # Route53 + ACM certificate
 ```
 
+### Enterprise Feature Toggles
+
+```hcl
+enable_waf       = true    # WAF on ALB (OWASP, rate limiting, geo-blocking)
+enable_cache     = true    # ElastiCache Redis for caching
+enable_efs       = true    # EFS shared persistent storage
+enable_secrets   = true    # Secrets Manager for credentials
+enable_security  = true    # GuardDuty + VPC Flow Logs
+enable_queues    = true    # SQS queues for async processing
+enable_backup    = true    # AWS Backup vault (daily + weekly)
+enable_bastion   = true    # Bastion host with SSM Session Manager
+```
+
 ### Fargate Sizing
 
 Default sizing applies to all services. Override per-service for workloads that need more resources:
@@ -287,6 +300,13 @@ infrastructure/
 | **monitoring** | Observability | CloudWatch dashboard, CPU/memory/5xx alarms, SNS alert topic |
 | **autoscaling** | Auto scaling | ECS target tracking policies for CPU and memory utilization |
 | **bastion** | Secure access | EC2 bastion host with SSM Session Manager, DB port forwarding |
+| **waf** | Web firewall | WAF v2 with OWASP rules, rate limiting, geo-blocking, logging |
+| **cache** | Caching | ElastiCache Redis for geocoding, routing, tile metadata cache |
+| **storage** | Shared storage | EFS with per-service access points (TileTopia, GeoLang, Letta) |
+| **secrets** | Credentials | Secrets Manager for DB creds, API keys, Letta password |
+| **security** | Threat detection | GuardDuty, VPC Flow Logs, ECS Exec IAM policy |
+| **queues** | Async processing | SQS queues with DLQs for tiles, geocoding, AI, ETL |
+| **backup** | Disaster recovery | AWS Backup vault with daily/weekly schedules, cross-region copy |
 
 ## Networking
 
@@ -365,10 +385,14 @@ aws sns subscribe \
 | NAT Gateway + data | ~$35 |
 | ALB | ~$16 |
 | CloudFront (light usage) | ~$5 |
+| ElastiCache (cache.t4g.micro) | ~$12 |
+| EFS (elastic, light usage) | ~$3 |
+| WAF (managed rules) | ~$10 |
 | S3 | ~$2 |
 | Route53 | ~$1 |
-| CloudWatch | ~$3 |
-| **Total** | **~$155** |
+| CloudWatch + GuardDuty | ~$5 |
+| Bastion (t4g.nano) | ~$3 |
+| **Total** | **~$185** |
 
 > **Cost-saving tip:** For dev environments, you can stop ECS services after hours by setting `desired_count = 0` and restarting them when needed.
 
@@ -546,13 +570,19 @@ For team usage, configure S3 backend for state management:
 
 ## Security Notes
 
+- **WAF** — OWASP core rules, SQL injection protection, known bad inputs, rate limiting, geo-blocking
 - **RDS** — Private subnets only, encrypted at rest, no public access
 - **ECS** — Private subnets, outbound via NAT Gateway
 - **S3** — Public access blocked, server-side encryption (AES-256)
+- **EFS** — Encrypted at rest, per-service access points for isolation
 - **ALB** — TLS 1.3 when ACM certificate is attached
 - **IAM** — Least-privilege roles; ECS tasks only access their own S3 bucket
 - **Bastion** — SSM Session Manager (no SSH keys); IMDSv2 enforced; encrypted EBS
-- **Secrets** — Use `terraform.tfvars` locally (gitignored); use SSM Parameter Store or Secrets Manager in CI/CD
+- **GuardDuty** — Threat detection with S3 monitoring and malware protection
+- **VPC Flow Logs** — Full network audit trail (90-day retention)
+- **Secrets Manager** — Centralized credential storage with rotation support
+- **Backup** — Daily + weekly automated backups with optional cross-region DR
+- **Secrets** — `terraform.tfvars` is gitignored; use Secrets Manager in production/CI
 
 ## License
 

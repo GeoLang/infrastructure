@@ -238,3 +238,101 @@ variable "bastion_allowed_cidrs" {
   type        = list(string)
   default     = []
 }
+
+# ─── WAF ─────────────────────────────────────────────────────────────────────
+
+variable "enable_waf" {
+  description = "Deploy AWS WAF on the ALB"
+  type        = bool
+  default     = false
+}
+
+variable "waf_rate_limit" {
+  description = "WAF rate limit — max requests per 5-minute window per IP"
+  type        = number
+  default     = 2000
+}
+
+variable "waf_blocked_countries" {
+  description = "ISO country codes to block at WAF (e.g., [\"CN\", \"RU\"])"
+  type        = list(string)
+  default     = []
+}
+
+# ─── ElastiCache (Redis) ─────────────────────────────────────────────────────
+
+variable "enable_cache" {
+  description = "Deploy ElastiCache Redis for caching"
+  type        = bool
+  default     = false
+}
+
+variable "cache_node_type" {
+  description = "ElastiCache node type"
+  type        = string
+  default     = "cache.t4g.micro"
+}
+
+# ─── EFS Storage ─────────────────────────────────────────────────────────────
+
+variable "enable_efs" {
+  description = "Deploy EFS for persistent shared storage"
+  type        = bool
+  default     = false
+}
+
+# ─── Secrets Manager ─────────────────────────────────────────────────────────
+
+variable "enable_secrets" {
+  description = "Deploy Secrets Manager for credential management"
+  type        = bool
+  default     = false
+}
+
+# ─── Security (GuardDuty + VPC Flow Logs) ─────────────────────────────────────
+
+variable "enable_security" {
+  description = "Deploy GuardDuty threat detection and VPC Flow Logs"
+  type        = bool
+  default     = false
+}
+
+variable "enable_guardduty" {
+  description = "Enable GuardDuty (within security module)"
+  type        = bool
+  default     = true
+}
+
+# ─── SQS Queues ──────────────────────────────────────────────────────────────
+
+variable "enable_queues" {
+  description = "Deploy SQS queues for async processing"
+  type        = bool
+  default     = false
+}
+
+# ─── Backup ──────────────────────────────────────────────────────────────────
+
+variable "enable_backup" {
+  description = "Deploy AWS Backup vault for RDS and EFS"
+  type        = bool
+  default     = false
+}
+
+variable "backup_retention_days" {
+  description = "Number of days to retain backups"
+  type        = number
+  default     = 30
+}
+
+variable "enable_cross_region_backup" {
+  description = "Enable cross-region backup copy for disaster recovery"
+  type        = bool
+  default     = false
+}
+
+variable "dr_region" {
+  description = "AWS region for disaster recovery backup copies"
+  type        = string
+  default     = "us-west-2"
+}

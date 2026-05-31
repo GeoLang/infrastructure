@@ -108,3 +108,30 @@ autoscaling_config = {
 
 # ── Bastion Host ─────────────────────────────────────────────────
 enable_bastion = true
+
+# ── WAF (Web Application Firewall) ──────────────────────────────
+enable_waf     = true
+waf_rate_limit = 2000
+
+# ── ElastiCache (Redis) ─────────────────────────────────────────
+enable_cache   = true
+cache_node_type = "cache.t4g.micro"
+
+# ── EFS (Shared Storage) ────────────────────────────────────────
+enable_efs = true
+
+# ── Secrets Manager ─────────────────────────────────────────────
+enable_secrets = true
+
+# ── Security (GuardDuty + VPC Flow Logs) ─────────────────────────
+enable_security  = true
+enable_guardduty = true
+
+# ── SQS Queues ──────────────────────────────────────────────────
+enable_queues = true
+
+# ── Backup & DR ─────────────────────────────────────────────────
+enable_backup              = true
+backup_retention_days      = 30
+enable_cross_region_backup = false
+# dr_region                = "us-west-2"

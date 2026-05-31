@@ -175,6 +175,11 @@ output "endpoint" {
   value       = aws_db_instance.main.endpoint
 }
 
+output "arn" {
+  description = "RDS instance ARN"
+  value       = aws_db_instance.main.arn
+}
+
 output "address" {
   description = "RDS hostname"
   value       = aws_db_instance.main.address
