@@ -586,4 +586,6 @@ For team usage, configure S3 backend for state management:
 
 ## License
 
-AGPL-3.0-or-later — matching the GeoLang suite license.
+AGPL-3.0-or-later, see [LICENSE](LICENSE).
+
+Copyright (C) 2026 Grok Image Compression Inc.
