@@ -65,12 +65,54 @@ resource "aws_cloudfront_distribution" "main" {
       }
     }
 
+    # Never cache here. This behavior catches the authenticated API and the
+    # frontend shell, and a non-zero max_ttl lets an origin Cache-Control keep
+    # serving a revoked token's response for that long. Public immutable content
+    # gets its aggressive TTLs from the ordered behaviors below.
     min_ttl     = 0
-    default_ttl = 0    # Don't cache API by default
-    max_ttl     = 3600
+    default_ttl = 0
+    max_ttl     = 0
   }
 
-  # 3D Tiles — cache aggressively (immutable content-addressed tiles)
+  # Realtime collaboration WebSocket (tiletopia /api/v1/realtime/{room}).
+  # Auth rides the subprotocol offer `Sec-WebSocket-Protocol: bearer, <jwt>`
+  # because a browser cannot set Authorization on a WS handshake, so that header
+  # has to reach the origin or every handshake 401s. Upgrade and Connection are
+  # deliberately absent: CloudFront cannot cache on them and drives the upgrade
+  # itself.
+  ordered_cache_behavior {
+    path_pattern           = "/api/v1/realtime/*"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "alb"
+    viewer_protocol_policy = "https-only"
+
+    forwarded_values {
+      # the room id is in the path and the origin refuses a query-string
+      # credential, so there is nothing in the query worth forwarding
+      query_string = false
+      headers = [
+        "Sec-WebSocket-Protocol",
+        "Sec-WebSocket-Key",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Extensions",
+        "Authorization",
+        "Origin",
+        "Host",
+      ]
+      cookies { forward = "none" }
+    }
+
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+  }
+
+  # 3D Tiles — cache aggressively (immutable content-addressed tiles).
+  # This and the terrain behavior below forward no credential on purpose: both
+  # map to reads tiletopia serves anonymously (is_public_read in its auth.rs), so
+  # the response is identical for every caller. If tile reads ever become
+  # per-user, these TTLs have to go to 0 with them.
   ordered_cache_behavior {
     path_pattern           = "/tiles/v1/3dtiles/*"
     allowed_methods        = ["GET", "HEAD"]
@@ -83,9 +125,9 @@ resource "aws_cloudfront_distribution" "main" {
       cookies { forward = "none" }
     }
 
-    min_ttl     = 86400     # 1 day
-    default_ttl = 604800    # 7 days
-    max_ttl     = 2592000   # 30 days
+    min_ttl     = 86400   # 1 day
+    default_ttl = 604800  # 7 days
+    max_ttl     = 2592000 # 30 days
     compress    = true
   }
 
@@ -127,7 +169,11 @@ resource "aws_cloudfront_distribution" "main" {
     compress    = true
   }
 
-  # Catalog/metadata — short cache
+  # Catalog is authenticated, so never cache it. tiletopia's /api/v1/catalog sits behind
+  # auth_middleware and answers per user, but this behavior kept no credential in
+  # the cache key at all, so one caller's catalog was served to everyone for up to
+  # an hour. Authorization has to reach the origin for the request to succeed, and
+  # the TTLs stay 0 so the response is never stored.
   ordered_cache_behavior {
     path_pattern           = "/tiles/v1/catalog*"
     allowed_methods        = ["GET", "HEAD"]
@@ -137,12 +183,13 @@ resource "aws_cloudfront_distribution" "main" {
 
     forwarded_values {
       query_string = true
-      cookies { forward = "none" }
+      headers      = ["Authorization", "Origin", "Host"]
+      cookies { forward = "all" }
     }
 
-    min_ttl     = 60
-    default_ttl = 300
-    max_ttl     = 3600
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
     compress    = true
   }
 
