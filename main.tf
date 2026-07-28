@@ -117,8 +117,10 @@ module "loadbalancer" {
   name_prefix       = local.name_prefix
   vpc_id            = module.networking.vpc_id
   public_subnet_ids = module.networking.public_subnet_ids
-  certificate_arn   = var.enable_dns && var.domain_name != "" ? module.dns[0].certificate_arn : ""
-  tags              = local.tags
+  # the ALB needs a certificate from its own region, not the us-east-1 one
+  # CloudFront requires
+  certificate_arn = var.enable_dns && var.domain_name != "" ? module.dns[0].alb_certificate_arn : ""
+  tags            = local.tags
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -370,9 +372,14 @@ module "cdn" {
   source = "./modules/cdn"
   count  = var.enable_cdn ? 1 : 0
 
-  name_prefix     = local.name_prefix
-  alb_dns_name    = module.loadbalancer.alb_dns_name
-  domain_name     = var.domain_name
+  name_prefix  = local.name_prefix
+  alb_dns_name = module.loadbalancer.alb_dns_name
+  domain_name  = var.domain_name
+
+  # built from the domain rather than read back from the dns module, so the two
+  # modules do not have to depend on each other in both directions
+  origin_domain_name = var.enable_dns && var.domain_name != "" ? "origin.${var.domain_name}" : ""
+
   certificate_arn = var.enable_dns && var.domain_name != "" ? module.dns[0].certificate_arn : ""
   tags            = local.tags
 }
@@ -386,7 +393,8 @@ module "dns" {
   count  = var.enable_dns && var.domain_name != "" ? 1 : 0
 
   providers = {
-    aws = aws.us_east_1
+    aws          = aws.us_east_1
+    aws.regional = aws
   }
 
   name_prefix = local.name_prefix

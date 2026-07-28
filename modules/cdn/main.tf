@@ -23,9 +23,24 @@ variable "certificate_arn" {
   default     = ""
 }
 
+variable "origin_domain_name" {
+  description = "Hostname for the ALB origin, e.g. origin.example.com. Empty falls back to the raw ALB DNS name over plain HTTP."
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+locals {
+  # TLS to the origin needs a hostname we control. ACM will not issue for the
+  # raw *.elb.amazonaws.com name and CloudFront checks the origin certificate
+  # against the origin hostname, so https-only is only possible once a domain is
+  # configured and origin.<domain> points at the ALB.
+  origin_is_named = var.origin_domain_name != ""
+  origin_host     = local.origin_is_named ? var.origin_domain_name : var.alb_dns_name
 }
 
 # ─── CloudFront Distribution ─────────────────────────────────────────────────
@@ -39,13 +54,17 @@ resource "aws_cloudfront_distribution" "main" {
   aliases = var.domain_name != "" && var.certificate_arn != "" ? [var.domain_name] : []
 
   origin {
-    domain_name = var.alb_dns_name
+    domain_name = local.origin_host
     origin_id   = "alb"
 
     custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
+      http_port  = 80
+      https_port = 443
+      # WARNING: the http-only fallback is not fit for production. It sends every
+      # Authorization header, JWT and session cookie from CloudFront to the ALB in
+      # cleartext across the public internet. It exists only so the stack can come
+      # up without a domain. Set domain_name and enable_dns to get https-only.
+      origin_protocol_policy = local.origin_is_named ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
   }
@@ -109,11 +128,9 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   # ptolemy's websockets: /ws/branches/{id} and /ws/rooms/{id}. Same handshake
-  # forwarding as realtime above. ptolemy reads only the Authorization header
-  # (ptolemy-api/src/auth.rs:290-294, no subprotocol fallback) and its classify()
-  # calls every GET public, so these handshakes carry no credential today. The
-  # forwarding is here so the upgrade survives the CDN, not because it authorizes
-  # anything.
+  # forwarding as realtime above, and for the same reason: ptolemy classifies
+  # /ws/* as authenticated and takes the token from either the Authorization
+  # header or the bearer subprotocol, so that header has to reach the origin.
   ordered_cache_behavior {
     path_pattern           = "/ws/*"
     allowed_methods        = ["GET", "HEAD", "OPTIONS"]

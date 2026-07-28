@@ -7,6 +7,11 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
+      # The default provider here is us-east-1, because CloudFront only reads
+      # viewer certificates from that region. `aws.regional` is the deployment
+      # region, where the ALB lives: an ALB can only use a certificate issued in
+      # its own region, so the two listeners need two certificates.
+      configuration_aliases = [aws.regional]
     }
   }
 }
@@ -95,6 +100,48 @@ resource "aws_acm_certificate_validation" "main" {
   validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
 }
 
+# ─── ALB Certificate (deployment region) ─────────────────────────────────────
+# Same domains as the CloudFront certificate, issued in the region the ALB runs
+# in. ACM hands out one validation CNAME per domain per account and it works in
+# every region, so this reuses the records above instead of creating its own.
+# Two resources writing the same record would fight on every plan.
+
+resource "aws_acm_certificate" "alb" {
+  provider                  = aws.regional
+  domain_name               = var.domain_name
+  subject_alternative_names = ["*.${var.domain_name}"]
+  validation_method         = "DNS"
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-alb-cert" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_acm_certificate_validation" "alb" {
+  provider                = aws.regional
+  certificate_arn         = aws_acm_certificate.alb.arn
+  validation_record_fqdns = [for record in aws_route53_record.cert_validation : record.fqdn]
+}
+
+# ─── Origin Record → ALB ─────────────────────────────────────────────────────
+# CloudFront checks the origin's certificate against the origin hostname, and
+# ACM will not issue for the raw *.elb.amazonaws.com name. This gives the ALB a
+# name we control so the CloudFront-to-ALB hop can be TLS instead of cleartext.
+
+resource "aws_route53_record" "origin" {
+  zone_id = aws_route53_zone.main.zone_id
+  name    = "origin.${var.domain_name}"
+  type    = "A"
+
+  alias {
+    name                   = var.alb_dns_name
+    zone_id                = var.alb_zone_id
+    evaluate_target_health = false
+  }
+}
+
 # ─── A Record → CloudFront or ALB ────────────────────────────────────────────
 
 resource "aws_route53_record" "root" {
@@ -135,6 +182,16 @@ output "name_servers" {
 }
 
 output "certificate_arn" {
-  description = "Validated ACM certificate ARN"
+  description = "Validated ACM certificate ARN (us-east-1, for the CloudFront viewer)"
   value       = aws_acm_certificate_validation.main.certificate_arn
+}
+
+output "alb_certificate_arn" {
+  description = "Validated ACM certificate ARN in the deployment region, for the ALB listener"
+  value       = aws_acm_certificate_validation.alb.certificate_arn
+}
+
+output "origin_domain_name" {
+  description = "Hostname pointing at the ALB, used as the CloudFront origin"
+  value       = aws_route53_record.origin.name
 }
