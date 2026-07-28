@@ -108,11 +108,48 @@ resource "aws_cloudfront_distribution" "main" {
     max_ttl     = 0
   }
 
+  # ptolemy's websockets: /ws/branches/{id} and /ws/rooms/{id}. Same handshake
+  # forwarding as realtime above. ptolemy reads only the Authorization header
+  # (ptolemy-api/src/auth.rs:290-294, no subprotocol fallback) and its classify()
+  # calls every GET public, so these handshakes carry no credential today. The
+  # forwarding is here so the upgrade survives the CDN, not because it authorizes
+  # anything.
+  ordered_cache_behavior {
+    path_pattern           = "/ws/*"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "alb"
+    viewer_protocol_policy = "https-only"
+
+    forwarded_values {
+      query_string = false
+      headers = [
+        "Sec-WebSocket-Protocol",
+        "Sec-WebSocket-Key",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Extensions",
+        "Authorization",
+        "Origin",
+        "Host",
+      ]
+      cookies { forward = "none" }
+    }
+
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+  }
+
   # 3D Tiles — cache aggressively (immutable content-addressed tiles).
-  # This and the terrain behavior below forward no credential on purpose: both
-  # map to reads tiletopia serves anonymously (is_public_read in its auth.rs), so
-  # the response is identical for every caller. If tile reads ever become
-  # per-user, these TTLs have to go to 0 with them.
+  # No credential is forwarded here or on terrain below on purpose: both map to
+  # reads tiletopia serves anonymously (is_public_read in its auth.rs), so the
+  # response is identical for every caller. If tile reads ever become per-user,
+  # these TTLs have to go to 0 with them.
+  #
+  # TODO: this pattern matches no tiletopia route. Its 3D tiles are served from
+  # /api/v1/assets/{id}/tileset.json and /api/v1/assets/{id}/tiles/{path}, so
+  # nothing reaches this behavior and the terrain one below is the only tile
+  # cache that works. Fixing it needs the /tiles prefix question settled first.
   ordered_cache_behavior {
     path_pattern           = "/tiles/v1/3dtiles/*"
     allowed_methods        = ["GET", "HEAD"]

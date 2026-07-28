@@ -282,15 +282,28 @@ resource "aws_lb_target_group" "services" {
 
 # ─── ALB Listener Rules (path-based routing) ─────────────────────────────────
 #
-# Routing pattern mirrors viewtopia/deploy/nginx-platform.conf:
-#   /agent/*     → geolang:8080
-#   /tiles/*     → tiletopia:3000
-#   /geocode/*   → geokode:3000
-#   /route*      → itinera:3000
-#   /isochrone*  → itinera:3000
-#   /delivery/*  → itinera:3000
-#   /api/*       → ptolemy:3000  (catch-all for API)
-#   /*           → viewtopia:5174 (frontend default)
+# Source of truth for this routing is viewtopia/deploy/nginx-platform.conf. When
+# a location changes there, change the matching rule here.
+#
+#   /agent/*              → geolang:8080
+#   /tiles/*              → tiletopia:3000
+#   /api/v1/realtime/*    → tiletopia:3000  (collab websocket)
+#   /api/v1/auth/oidc/*   → ptolemy:3000    (see below)
+#   /api/v1/auth/*        → tiletopia:3000
+#   /api/v1/portal/*      → tiletopia:3000
+#   /api/geocode/*        → geokode:3000
+#   /api/route*           → itinera:3000
+#   /api/isochrone*       → itinera:3000
+#   /api/delivery/*       → itinera:3000
+#   /api/*, /ws/*         → ptolemy:3000    (catch-all for API)
+#   /*                    → viewtopia:5174  (frontend default)
+#
+# ptolemy and tiletopia both serve /api/v1, so the carve-outs above are the only
+# thing keeping them apart. Two of them overlap and the priorities matter:
+# ptolemy owns /api/v1/auth/oidc/* (ptolemy-api/src/oidc.rs:57-59, nested at
+# /api/v1) while tiletopia owns the rest of /api/v1/auth/*, so the oidc rule has
+# to win or ptolemy's OIDC login and callback land on tiletopia. nginx has no
+# equivalent carve-out and misroutes them today.
 
 locals {
   # Priority-ordered routing rules. Lower priority number = evaluated first.
@@ -303,6 +316,26 @@ locals {
     tiletopia = {
       priority = 200
       paths    = ["/tiles/*", "/tiles"]
+      service  = "tiletopia"
+    }
+    tiletopia_realtime = {
+      priority = 150
+      paths    = ["/api/v1/realtime/*"]
+      service  = "tiletopia"
+    }
+    ptolemy_oidc = {
+      priority = 155
+      paths    = ["/api/v1/auth/oidc/*"]
+      service  = "ptolemy"
+    }
+    tiletopia_auth = {
+      priority = 160
+      paths    = ["/api/v1/auth/*"]
+      service  = "tiletopia"
+    }
+    tiletopia_portal = {
+      priority = 170
+      paths    = ["/api/v1/portal/*"]
       service  = "tiletopia"
     }
     geokode = {
