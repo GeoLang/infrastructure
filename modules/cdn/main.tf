@@ -163,12 +163,12 @@ resource "aws_cloudfront_distribution" "main" {
   # response is identical for every caller. If tile reads ever become per-user,
   # these TTLs have to go to 0 with them.
   #
-  # TODO: this pattern matches no tiletopia route. Its 3D tiles are served from
-  # /api/v1/assets/{id}/tileset.json and /api/v1/assets/{id}/tiles/{path}, so
-  # nothing reaches this behavior and the terrain one below is the only tile
-  # cache that works. Fixing it needs the /tiles prefix question settled first.
+  # The tileset and the tile payloads it references are two routes, so they need
+  # a pattern each. A CloudFront wildcard crosses slashes while is_public_read
+  # matches whole segments, so a longer path that still fits these patterns is
+  # refused at the origin rather than served from a shared cache entry.
   ordered_cache_behavior {
-    path_pattern           = "/tiles/v1/3dtiles/*"
+    path_pattern           = "/api/v1/assets/*/tileset.json"
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "alb"
@@ -185,9 +185,27 @@ resource "aws_cloudfront_distribution" "main" {
     compress    = true
   }
 
+  ordered_cache_behavior {
+    path_pattern           = "/api/v1/assets/*/tiles/*"
+    allowed_methods        = ["GET", "HEAD"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "alb"
+    viewer_protocol_policy = "redirect-to-https"
+
+    forwarded_values {
+      query_string = false
+      cookies { forward = "none" }
+    }
+
+    min_ttl     = 86400
+    default_ttl = 604800
+    max_ttl     = 2592000
+    compress    = true
+  }
+
   # Terrain tiles — cache aggressively
   ordered_cache_behavior {
-    path_pattern           = "/tiles/v1/terrain/*"
+    path_pattern           = "/api/v1/terrain/*"
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "alb"
@@ -220,30 +238,6 @@ resource "aws_cloudfront_distribution" "main" {
     min_ttl     = 3600
     default_ttl = 86400
     max_ttl     = 604800
-    compress    = true
-  }
-
-  # Catalog is authenticated, so never cache it. tiletopia's /api/v1/catalog sits behind
-  # auth_middleware and answers per user, but this behavior kept no credential in
-  # the cache key at all, so one caller's catalog was served to everyone for up to
-  # an hour. Authorization has to reach the origin for the request to succeed, and
-  # the TTLs stay 0 so the response is never stored.
-  ordered_cache_behavior {
-    path_pattern           = "/tiles/v1/catalog*"
-    allowed_methods        = ["GET", "HEAD"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "alb"
-    viewer_protocol_policy = "redirect-to-https"
-
-    forwarded_values {
-      query_string = true
-      headers      = ["Authorization", "Origin", "Host"]
-      cookies { forward = "all" }
-    }
-
-    min_ttl     = 0
-    default_ttl = 0
-    max_ttl     = 0
     compress    = true
   }
 

@@ -291,6 +291,8 @@ resource "aws_lb_target_group" "services" {
 #   /api/v1/auth/oidc/*   → ptolemy:3000    (see below)
 #   /api/v1/auth/*        → tiletopia:3000
 #   /api/v1/portal/*      → tiletopia:3000
+#   /api/v1/assets*       → tiletopia:3000  (3D tiles)
+#   /api/v1/terrain/*     → tiletopia:3000  (quantized-mesh terrain)
 #   /api/geocode/*        → geokode:3000
 #   /api/route*           → itinera:3000
 #   /api/isochrone*       → itinera:3000
@@ -304,6 +306,11 @@ resource "aws_lb_target_group" "services" {
 # /api/v1) while tiletopia owns the rest of /api/v1/auth/*, so the oidc rule has
 # to win or ptolemy's OIDC login and callback land on tiletopia. nginx has no
 # equivalent carve-out and misroutes them today.
+#
+# The asset and terrain carve-out is what the CDN's tile cache behaviors depend
+# on: without it the tileset, tile and terrain reads land on ptolemy's catch-all
+# and 404. nginx reaches them through its /tiles/ location, which rewrites the
+# prefix to /api/, and an ALB rule cannot rewrite.
 
 locals {
   # Priority-ordered routing rules. Lower priority number = evaluated first.
@@ -336,6 +343,11 @@ locals {
     tiletopia_portal = {
       priority = 170
       paths    = ["/api/v1/portal/*"]
+      service  = "tiletopia"
+    }
+    tiletopia_tiles = {
+      priority = 180
+      paths    = ["/api/v1/assets", "/api/v1/assets/*", "/api/v1/terrain/*", "/api/v1/catalog", "/api/v1/catalog/*"]
       service  = "tiletopia"
     }
     geokode = {
