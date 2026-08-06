@@ -19,6 +19,7 @@ enable_ptolemy   = false
 enable_tiletopia = true
 enable_geokode   = false
 enable_itinera   = false
+enable_interiora = false
 enable_geolang   = true
 enable_viewtopia = true
 

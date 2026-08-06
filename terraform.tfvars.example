@@ -36,6 +36,7 @@ db_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"
 # enable_tiletopia = true    # 3D Tiles / terrain
 # enable_geokode   = false   # Geocoding
 # enable_itinera   = false   # Routing
+# enable_interiora = false   # Indoor maps + indoor routing
 # enable_geolang   = true    # AI agent (includes Letta)
 # enable_viewtopia = true    # Web frontend
 

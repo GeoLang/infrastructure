@@ -63,6 +63,7 @@ locals {
     var.enable_tiletopia ? "tiletopia" : "",
     var.enable_geokode ? "geokode" : "",
     var.enable_itinera ? "itinera" : "",
+    var.enable_interiora ? "interiora" : "",
     var.enable_geolang ? "geolang" : "",
     var.enable_geolang ? "letta" : "",
     var.enable_viewtopia ? "viewtopia" : "",
@@ -249,6 +250,23 @@ module "ecs" {
         command        = ["itinera", "serve", "--bind", "0.0.0.0:3000"]
         environment = [
           { name = "RUST_LOG", value = "info,itinera=debug" },
+        ]
+      }
+    } : {},
+
+    # ── Interiora (Indoor maps + indoor routing) ──────────────────
+    var.enable_interiora ? {
+      interiora = {
+        image          = local.service_images["interiora"]
+        cpu            = local.service_sizing["interiora"].cpu
+        memory         = local.service_sizing["interiora"].memory
+        desired_count  = local.service_sizing["interiora"].desired_count
+        container_port = 3000
+        health_path    = "/health"
+        command        = []
+        environment = [
+          { name = "PORT", value = "3000" },
+          { name = "RUST_LOG", value = "info,interiora=debug" },
         ]
       }
     } : {},

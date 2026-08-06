@@ -297,6 +297,7 @@ resource "aws_lb_target_group" "services" {
 #   /api/route*           → itinera:3000
 #   /api/isochrone*       → itinera:3000
 #   /api/delivery/*       → itinera:3000
+#   /api/indoor/*         → interiora:3000
 #   /api/*, /ws/*         → ptolemy:3000    (catch-all for API)
 #   /*                    → viewtopia:5174  (frontend default)
 #
@@ -369,6 +370,11 @@ locals {
       priority = 420
       paths    = ["/api/delivery/*", "/api/delivery"]
       service  = "itinera"
+    }
+    interiora = {
+      priority = 430
+      paths    = ["/api/indoor/*", "/api/indoor"]
+      service  = "interiora"
     }
     ptolemy = {
       priority = 500

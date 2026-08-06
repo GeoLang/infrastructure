@@ -68,6 +68,12 @@ variable "enable_itinera" {
   default     = false
 }
 
+variable "enable_interiora" {
+  description = "Deploy Interiora indoor mapping service"
+  type        = bool
+  default     = false
+}
+
 variable "enable_geolang" {
   description = "Deploy GeoLang AI agent (includes Letta)"
   type        = bool
@@ -140,8 +146,8 @@ variable "service_defaults" {
     desired_count = number
   })
   default = {
-    cpu           = 256  # 0.25 vCPU
-    memory        = 512  # 0.5 GB
+    cpu           = 256 # 0.25 vCPU
+    memory        = 512 # 0.5 GB
     desired_count = 1
   }
 }

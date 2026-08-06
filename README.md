@@ -164,6 +164,7 @@ enable_ptolemy   = true    # Geodatabase API (requires enable_database)
 enable_tiletopia = true    # 3D Tiles / terrain server
 enable_geokode   = false   # Geocoding service
 enable_itinera   = false   # Routing service
+enable_interiora = false   # Indoor maps + indoor routing
 enable_geolang   = true    # AI agent (auto-enables Letta)
 enable_viewtopia = true    # Web frontend
 enable_database  = true    # RDS PostGIS
