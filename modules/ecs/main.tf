@@ -298,6 +298,12 @@ resource "aws_lb_target_group" "services" {
 #   /api/isochrone*       → itinera:3000
 #   /api/delivery/*       → itinera:3000
 #   /api/indoor/*         → interiora:3000
+#   /plumb/*              → geoplumb:3000   (not under /api, so ahead of /*)
+#
+# geoplumb serves /layers and /tiles/*, and nginx strips the /plumb prefix on
+# the way through. An ALB rule cannot rewrite, so the prefix arrives intact
+# here and the image needs a path prefix of its own to answer it. The same
+# already holds for /api/indoor, /api/geocode, /api/route and /tiles.
 #   /api/*, /ws/*         → ptolemy:3000    (catch-all for API)
 #   /*                    → viewtopia:5174  (frontend default)
 #
@@ -375,6 +381,11 @@ locals {
       priority = 430
       paths    = ["/api/indoor/*", "/api/indoor"]
       service  = "interiora"
+    }
+    geoplumb = {
+      priority = 440
+      paths    = ["/plumb/*", "/plumb"]
+      service  = "geoplumb"
     }
     ptolemy = {
       priority = 500

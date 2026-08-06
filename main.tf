@@ -64,6 +64,7 @@ locals {
     var.enable_geokode ? "geokode" : "",
     var.enable_itinera ? "itinera" : "",
     var.enable_interiora ? "interiora" : "",
+    var.enable_geoplumb ? "geoplumb" : "",
     var.enable_geolang ? "geolang" : "",
     var.enable_geolang ? "letta" : "",
     var.enable_viewtopia ? "viewtopia" : "",
@@ -267,6 +268,29 @@ module "ecs" {
         environment = [
           { name = "PORT", value = "3000" },
           { name = "RUST_LOG", value = "info,interiora=debug" },
+        ]
+      }
+    } : {},
+
+    # ── Geoplumb (Windowed raster tiles over STAC) ────────────────
+    var.enable_geoplumb ? {
+      geoplumb = {
+        image          = local.service_images["geoplumb"]
+        cpu            = local.service_sizing["geoplumb"].cpu
+        memory         = local.service_sizing["geoplumb"].memory
+        desired_count  = local.service_sizing["geoplumb"].desired_count
+        container_port = 3000
+        health_path    = "/health"
+        command        = []
+        environment = [
+          { name = "PORT", value = "3000" },
+          { name = "RUST_LOG", value = "info,geoplumb=debug" },
+          # the server exits without a layer file and tasks here mount no
+          # volumes, so the deployed image has to carry one at this path
+          { name = "GEOPLUMB_LAYERS", value = "/etc/geoplumb/layers.toml" },
+          # per layer, so the default 256 MiB would overrun a 512 MB task as
+          # soon as the file names two layers
+          { name = "GEOPLUMB_CACHE_BYTES", value = "67108864" },
         ]
       }
     } : {},

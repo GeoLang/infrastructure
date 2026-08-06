@@ -74,6 +74,12 @@ variable "enable_interiora" {
   default     = false
 }
 
+variable "enable_geoplumb" {
+  description = "Deploy geoplumb windowed raster tile service"
+  type        = bool
+  default     = false
+}
+
 variable "enable_geolang" {
   description = "Deploy GeoLang AI agent (includes Letta)"
   type        = bool
