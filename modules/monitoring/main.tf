@@ -170,8 +170,8 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 12
         height = 6
         properties = {
-          title   = "${name} — CPU & Memory"
-          region  = var.aws_region
+          title  = "${name} — CPU & Memory"
+          region = var.aws_region
           metrics = [
             ["AWS/ECS", "CPUUtilization", "ClusterName", var.ecs_cluster_name, "ServiceName", svc, { stat = "Average", label = "CPU %" }],
             ["AWS/ECS", "MemoryUtilization", "ClusterName", var.ecs_cluster_name, "ServiceName", svc, { stat = "Average", label = "Memory %" }],
@@ -188,8 +188,8 @@ resource "aws_cloudwatch_dashboard" "main" {
         width  = 12
         height = 6
         properties = {
-          title   = "ALB — Request Count & Latency"
-          region  = var.aws_region
+          title  = "ALB — Request Count & Latency"
+          region = var.aws_region
           metrics = [
             ["AWS/ApplicationELB", "RequestCount", "LoadBalancer", var.alb_arn_suffix, { stat = "Sum", label = "Requests" }],
             ["AWS/ApplicationELB", "TargetResponseTime", "LoadBalancer", var.alb_arn_suffix, { stat = "Average", label = "Latency (s)" }],

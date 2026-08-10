@@ -73,7 +73,7 @@ resource "aws_secretsmanager_secret" "api_keys" {
 resource "aws_secretsmanager_secret_version" "api_keys" {
   secret_id = aws_secretsmanager_secret.api_keys.id
   secret_string = jsonencode({
-    xai_api_key   = ""
+    xai_api_key    = ""
     openai_api_key = ""
     groq_api_key   = ""
   })

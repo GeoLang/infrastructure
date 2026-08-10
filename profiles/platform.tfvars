@@ -30,7 +30,7 @@ enable_viewtopia = true
 enable_database      = true
 db_instance_class    = "db.t4g.micro"
 db_allocated_storage = 20
-db_multi_az          = false  # Set true for production HA
+db_multi_az          = false # Set true for production HA
 
 # ── CDN ──────────────────────────────────────────────────────────
 enable_cdn = true
@@ -44,8 +44,8 @@ enable_s3_tiles = true
 
 # ── Sizing ───────────────────────────────────────────────────────
 service_defaults = {
-  cpu           = 256   # 0.25 vCPU
-  memory        = 512   # 0.5 GB
+  cpu           = 256 # 0.25 vCPU
+  memory        = 512 # 0.5 GB
   desired_count = 1
 }
 
@@ -110,7 +110,7 @@ enable_waf     = true
 waf_rate_limit = 2000
 
 # ── ElastiCache (Redis) ─────────────────────────────────────────
-enable_cache   = true
+enable_cache    = true
 cache_node_type = "cache.t4g.micro"
 
 # ── EFS (Shared Storage) ────────────────────────────────────────

@@ -18,9 +18,9 @@ variable "tags" {
 
 resource "aws_sqs_queue" "tile_processing" {
   name                       = "${var.name_prefix}-tile-processing"
-  visibility_timeout_seconds = 900  # 15 min — tile processing can be slow
+  visibility_timeout_seconds = 900   # 15 min — tile processing can be slow
   message_retention_seconds  = 86400 # 1 day
-  receive_wait_time_seconds  = 20   # Long polling
+  receive_wait_time_seconds  = 20    # Long polling
 
   redrive_policy = jsonencode({
     deadLetterTargetArn = aws_sqs_queue.tile_processing_dlq.arn

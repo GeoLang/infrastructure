@@ -37,8 +37,8 @@ enable_s3_tiles = true
 
 # ── Sizing (smallest Fargate) ────────────────────────────────────
 service_defaults = {
-  cpu           = 256   # 0.25 vCPU
-  memory        = 512   # 0.5 GB
+  cpu           = 256 # 0.25 vCPU
+  memory        = 512 # 0.5 GB
   desired_count = 1
 }
 
