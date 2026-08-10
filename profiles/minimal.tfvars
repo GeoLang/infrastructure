@@ -1,9 +1,8 @@
 # GeoLang — Minimal Deployment Profile
 #
-# Lightweight development/demo stack with 4 services:
+# Lightweight development/demo stack with 3 services:
 #   - TileTopia (3D Tiles / terrain)
 #   - GeoLang (AI agent)
-#   - Letta (agent memory)
 #   - ViewTopia (web frontend)
 #
 # No database, geocoding, or routing services.
@@ -48,9 +47,5 @@ service_overrides = {
   geolang = {
     cpu    = 512
     memory = 1024
-  }
-  letta = {
-    cpu    = 256
-    memory = 512
   }
 }

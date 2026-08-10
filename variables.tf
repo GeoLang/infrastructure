@@ -81,7 +81,7 @@ variable "enable_geoplumb" {
 }
 
 variable "enable_geolang" {
-  description = "Deploy GeoLang AI agent (includes Letta)"
+  description = "Deploy GeoLang AI agent"
   type        = bool
   default     = true
 }

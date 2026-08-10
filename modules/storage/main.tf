@@ -1,8 +1,7 @@
 # GeoLang Infrastructure — EFS Storage Module
 #
 # Elastic File System for persistent shared storage across
-# ECS Fargate tasks. Used for TileTopia data, GeoLang cache,
-# and Letta agent memory.
+# ECS Fargate tasks. Used for TileTopia data and GeoLang cache.
 
 variable "name_prefix" {
   type = string
@@ -137,26 +136,6 @@ resource "aws_efs_access_point" "geolang" {
   tags = merge(var.tags, { Name = "${var.name_prefix}-geolang-ap", Service = "geolang" })
 }
 
-resource "aws_efs_access_point" "letta" {
-  file_system_id = aws_efs_file_system.main.id
-
-  posix_user {
-    gid = 0
-    uid = 0
-  }
-
-  root_directory {
-    path = "/letta"
-    creation_info {
-      owner_gid   = 0
-      owner_uid   = 0
-      permissions = "0755"
-    }
-  }
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-letta-ap", Service = "letta" })
-}
-
 # ─── EFS Backup Policy ───────────────────────────────────────────────────────
 
 resource "aws_efs_backup_policy" "main" {
@@ -184,7 +163,6 @@ output "access_points" {
   value = {
     tiletopia = aws_efs_access_point.tiletopia.id
     geolang   = aws_efs_access_point.geolang.id
-    letta     = aws_efs_access_point.letta.id
   }
 }
 

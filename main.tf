@@ -33,12 +33,11 @@
 #   │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │
 #   │  │ ViewTopia│ │ Ptolemy  │ │TileTopia │ │ GeoLang  │      │
 #   │  │ (nginx)  │ │ (Rust)   │ │ (Rust)   │ │ (Python) │      │
-#   │  └──────────┘ └──────────┘ └──────────┘ └────┬─────┘      │
-#   │  ┌──────────┐ ┌──────────┐                    │            │
-#   │  │ Geokode  │ │ Itinera  │               ┌────▼─────┐     │
-#   │  │ (Rust)   │ │ (Rust)   │               │  Letta   │     │
-#   │  └──────────┘ └──────────┘               │ (AI Mem) │     │
-#   │                                           └──────────┘     │
+#   │  └──────────┘ └──────────┘ └──────────┘ └──────────┘      │
+#   │  ┌──────────┐ ┌──────────┐                                │
+#   │  │ Geokode  │ │ Itinera  │                                │
+#   │  │ (Rust)   │ │ (Rust)   │                                │
+#   │  └──────────┘ └──────────┘                                │
 #   │  Service Discovery: *.geolang.local (Cloud Map)            │
 #   └─────────────────────────┬───────────────────────────────────┘
 #                             │
@@ -57,7 +56,6 @@ locals {
   }
 
   # ── Determine which services to deploy ──────────────────────────
-  # Letta is implicitly enabled when GeoLang is enabled.
   enabled_services = compact([
     var.enable_ptolemy ? "ptolemy" : "",
     var.enable_tiletopia ? "tiletopia" : "",
@@ -66,7 +64,6 @@ locals {
     var.enable_interiora ? "interiora" : "",
     var.enable_geoplumb ? "geoplumb" : "",
     var.enable_geolang ? "geolang" : "",
-    var.enable_geolang ? "letta" : "",
     var.enable_viewtopia ? "viewtopia" : "",
   ])
 
@@ -295,22 +292,6 @@ module "ecs" {
       }
     } : {},
 
-    # ── Letta (AI Agent Memory Server) ────────────────────────────
-    var.enable_geolang ? {
-      letta = {
-        image          = "letta/letta:latest"
-        cpu            = local.service_sizing["letta"].cpu
-        memory         = local.service_sizing["letta"].memory
-        desired_count  = local.service_sizing["letta"].desired_count
-        container_port = 8283
-        health_path    = "/v1/health"
-        command        = []
-        environment = [
-          { name = "LETTA_SERVER_PASSWORD", value = "" },
-        ]
-      }
-    } : {},
-
     # ── GeoLang (AI/NLP Geospatial Agent) ─────────────────────────
     var.enable_geolang ? {
       geolang = {
@@ -325,7 +306,6 @@ module "ecs" {
           [
             { name = "GEOLANG_HOST", value = "0.0.0.0" },
             { name = "GEOLANG_PORT", value = "8080" },
-            { name = "LETTA_BASE_URL", value = "http://letta.${local.sd_suffix}:8283" },
           ],
           var.enable_ptolemy ? [{ name = "PTOLEMY_URL", value = "http://ptolemy.${local.sd_suffix}:3000" }] : [],
           var.enable_tiletopia ? [{ name = "TILETOPIA_URL", value = "http://tiletopia.${local.sd_suffix}:3000" }] : [],

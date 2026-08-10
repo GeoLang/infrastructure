@@ -1,13 +1,12 @@
 # GeoLang — Full Platform Deployment Profile
 #
-# Complete geospatial platform with all 8 services:
+# Complete geospatial platform with all services:
 #   - PostGIS (RDS) — Enterprise geodatabase
 #   - Ptolemy — Geodatabase API + geoprocessing
 #   - TileTopia — 3D Tiles / terrain / asset server
 #   - Geokode — Geocoding service
 #   - Itinera — Routing + isochrones
 #   - GeoLang — AI/NLP geospatial agent
-#   - Letta — Agent memory server
 #   - ViewTopia — Frontend viewer + A2UI
 #
 # Estimated cost: ~$150-250/month (Fargate + RDS + NAT + ALB + CloudFront)
@@ -70,11 +69,6 @@ service_overrides = {
   itinera = {
     cpu    = 512
     memory = 1024
-  }
-  # Letta agent memory
-  letta = {
-    cpu    = 256
-    memory = 512
   }
 }
 

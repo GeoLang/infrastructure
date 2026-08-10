@@ -160,10 +160,8 @@ output "deploy_commands" {
 
     # 2. Build and push each service:
     %{for svc in local.enabled_services~}
-    %{if svc != "letta"~}
     docker build -t ${module.ecr.repository_urls[svc]}:latest ../${svc}/
     docker push ${module.ecr.repository_urls[svc]}:latest
-    %{endif~}
     %{endfor~}
 
     # 3. Force new deployment of all services:

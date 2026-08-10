@@ -33,12 +33,11 @@ One-click AWS deployment for the **GeoLang Intelligent Geospatial Suite** — ag
     │   ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐  │
     │   │ ViewTopia │ │  Ptolemy  │ │ TileTopia │ │  GeoLang  │  │
     │   │  (Nginx)  │ │  (Rust)   │ │  (Rust)   │ │ (Python)  │  │
-    │   └───────────┘ └───────────┘ └───────────┘ └─────┬─────┘  │
-    │   ┌───────────┐ ┌───────────┐                     │        │
-    │   │  Geokode  │ │  Itinera  │                ┌────▼────┐   │
-    │   │  (Rust)   │ │  (Rust)   │                │  Letta  │   │
-    │   └───────────┘ └───────────┘                │ (AI Mem)│   │
-    │                                               └─────────┘   │
+    │   └───────────┘ └───────────┘ └───────────┘ └───────────┘  │
+    │   ┌───────────┐ ┌───────────┐                              │
+    │   │  Geokode  │ │  Itinera  │                              │
+    │   │  (Rust)   │ │  (Rust)   │                              │
+    │   └───────────┘ └───────────┘                              │
     │   Service Discovery: *.geolang-prod.local (Cloud Map)       │
     └──────────────────────────────┬───────────────────────────────┘
                                    │
@@ -57,8 +56,7 @@ One-click AWS deployment for the **GeoLang Intelligent Geospatial Suite** — ag
 | **TileTopia** | 3D Tiles, terrain, point cloud, asset server | 3000 | Rust | Yes |
 | **Geokode** | Forward/reverse geocoding | 3000 | Rust | Platform |
 | **Itinera** | Routing, isochrones, delivery optimization | 3000 | Rust | Platform |
-| **GeoLang** | AI/NLP geospatial agent (Letta + QGIS) | 8080 | Python | Yes |
-| **Letta** | AI agent persistent memory server | 8283 | Python | With GeoLang |
+| **GeoLang** | AI/NLP geospatial agent (QGIS) | 8080 | Python | Yes |
 | **PostGIS** | PostgreSQL 16 with PostGIS extensions | 5432 | — | Platform |
 
 ## Prerequisites
@@ -135,23 +133,23 @@ open $(terraform output -raw platform_url)
 
 ### Minimal (Dev/Demo) — ~$50-80/month
 
-4 services, no database, no CDN. Good for development and demos.
+3 services, no database, no CDN. Good for development and demos.
 
 ```bash
 terraform apply -var-file=profiles/minimal.tfvars -var="db_password=unused"
 ```
 
-**Includes:** TileTopia, GeoLang, Letta, ViewTopia
+**Includes:** TileTopia, GeoLang, ViewTopia
 
 ### Full Platform — ~$150-250/month
 
-All 8 services with RDS PostGIS, CloudFront CDN, and Route53 DNS.
+All services with RDS PostGIS, CloudFront CDN, and Route53 DNS.
 
 ```bash
 terraform apply -var-file=profiles/platform.tfvars -var="db_password=your-password"
 ```
 
-**Includes:** PostGIS, Ptolemy, TileTopia, Geokode, Itinera, GeoLang, Letta, ViewTopia
+**Includes:** PostGIS, Ptolemy, TileTopia, Geokode, Itinera, GeoLang, ViewTopia
 
 ## Configuration Reference
 
@@ -166,7 +164,7 @@ enable_geokode   = false   # Geocoding service
 enable_itinera   = false   # Routing service
 enable_interiora = false   # Indoor maps + indoor routing
 enable_geoplumb  = false   # Windowed raster tiles over STAC
-enable_geolang   = true    # AI agent (auto-enables Letta)
+enable_geolang   = true    # AI agent
 enable_viewtopia = true    # Web frontend
 enable_database  = true    # RDS PostGIS
 enable_cdn       = true    # CloudFront CDN
@@ -304,8 +302,8 @@ infrastructure/
 | **bastion** | Secure access | EC2 bastion host with SSM Session Manager, DB port forwarding |
 | **waf** | Web firewall | WAF v2 with OWASP rules, rate limiting, geo-blocking, logging |
 | **cache** | Caching | ElastiCache Redis for geocoding, routing, tile metadata cache |
-| **storage** | Shared storage | EFS with per-service access points (TileTopia, GeoLang, Letta) |
-| **secrets** | Credentials | Secrets Manager for DB creds, API keys, Letta password |
+| **storage** | Shared storage | EFS with per-service access points (TileTopia, GeoLang) |
+| **secrets** | Credentials | Secrets Manager for DB creds and API keys |
 | **security** | Threat detection | GuardDuty, VPC Flow Logs, ECS Exec IAM policy |
 | **queues** | Async processing | SQS queues with DLQs for tiles, geocoding, AI, ETL |
 | **backup** | Disaster recovery | AWS Backup vault with daily/weekly schedules, cross-region copy |
@@ -329,7 +327,6 @@ tiletopia.geolang-prod.local:3000
 geokode.geolang-prod.local:3000
 itinera.geolang-prod.local:3000
 geolang.geolang-prod.local:8080
-letta.geolang-prod.local:8283
 ```
 
 GeoLang (the AI agent) uses these DNS names to call other services internally, matching the Docker Compose service discovery pattern.

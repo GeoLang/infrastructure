@@ -38,7 +38,7 @@ db_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"
 # enable_itinera   = false   # Routing
 # enable_interiora = false   # Indoor maps + indoor routing
 # enable_geoplumb  = false   # Windowed raster tiles over STAC
-# enable_geolang   = true    # AI agent (includes Letta)
+# enable_geolang   = true    # AI agent
 # enable_viewtopia = true    # Web frontend
 
 # ─── Fargate Sizing ──────────────────────────────────────────────────────────

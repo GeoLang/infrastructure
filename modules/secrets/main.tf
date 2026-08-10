@@ -83,24 +83,6 @@ resource "aws_secretsmanager_secret_version" "api_keys" {
   }
 }
 
-# ─── Letta Server Password ───────────────────────────────────────────────────
-
-resource "aws_secretsmanager_secret" "letta_password" {
-  name        = "${var.name_prefix}/letta/password"
-  description = "GeoLang Platform — Letta agent memory server password"
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-letta-password" })
-}
-
-resource "aws_secretsmanager_secret_version" "letta_password" {
-  secret_id     = aws_secretsmanager_secret.letta_password.id
-  secret_string = jsonencode({ password = "" })
-
-  lifecycle {
-    ignore_changes = [secret_string]
-  }
-}
-
 # ─── Outputs ──────────────────────────────────────────────────────────────────
 
 output "db_credentials_arn" {
@@ -111,11 +93,6 @@ output "db_credentials_arn" {
 output "api_keys_arn" {
   description = "Secrets Manager ARN for API keys"
   value       = aws_secretsmanager_secret.api_keys.arn
-}
-
-output "letta_password_arn" {
-  description = "Secrets Manager ARN for Letta password"
-  value       = aws_secretsmanager_secret.letta_password.arn
 }
 
 output "db_credentials_secret_id" {
