@@ -262,7 +262,7 @@ infrastructure/
 │   └── platform.tfvars        # Full platform: 8 services, ~$150-250/mo
 ├── .github/
 │   └── workflows/
-│       └── deploy.yml         # CI/CD: build, push, deploy pipeline
+│       └── terraform.yml      # CI: fmt, validate, and a manual plan
 └── modules/
     ├── networking/            # VPC, subnets, NAT, route tables
     │   └── main.tf
@@ -490,54 +490,29 @@ autoscaling_config = {
 - **Scale in** — When metrics drop below target for 5 minutes, tasks are removed (down to `min_capacity`).
 - Each service scales independently based on its own utilization.
 
-## CI/CD Pipeline (GitHub Actions)
+## CI (GitHub Actions)
 
-The included GitHub Actions workflow (`.github/workflows/deploy.yml`) automates the full build-deploy cycle.
-
-### Pipeline Stages
-
-```
-┌──────────┐    ┌───────────┐    ┌───────────┐    ┌──────────┐    ┌─────────────┐
-│ Detect   │───▶│ Terraform │───▶│   Build   │───▶│  Deploy  │───▶│ Health      │
-│ Changes  │    │ Plan/Apply│    │ & Push    │    │ to ECS   │    │ Check       │
-└──────────┘    └───────────┘    └───────────┘    └──────────┘    └─────────────┘
-```
-
-### Triggers
+`.github/workflows/terraform.yml` checks this repo. It does not deploy.
 
 | Trigger | Action |
 |---------|--------|
-| Push to `main` | Auto-deploy changed services to **prod** |
-| Push to `develop` | Auto-deploy changed services to **dev** |
-| Manual dispatch | Deploy selected services to chosen environment |
+| Push or PR to `master` | `terraform fmt -check`, `init -backend=false`, `validate`. No AWS credentials needed. |
+| Manual dispatch | The above, then `terraform plan` against a chosen profile. |
+
+Applying is a local operation, run deliberately by an operator (see Quick Start). CI cannot apply, because `versions.tf` keeps the S3 backend commented out: with no remote state, a CI apply would create real resources and then discard the state file that tracks them.
+
+Service images are built and pushed from each service's own repo. This repo holds only terraform.
 
 ### Required GitHub Secrets
 
+Only needed for the manual plan. The check job needs none.
+
 | Secret | Description |
 |--------|-------------|
-| `AWS_ACCESS_KEY_ID` | IAM user with ECR/ECS/Terraform permissions |
+| `AWS_ACCESS_KEY_ID` | IAM user with Terraform permissions |
 | `AWS_SECRET_ACCESS_KEY` | IAM user secret key |
-| `AWS_REGION` | AWS region (e.g., `us-east-1`) |
-| `AWS_ACCOUNT_ID` | 12-digit AWS account ID |
+| `AWS_REGION` | AWS region, defaults to `us-east-1` |
 | `TF_VAR_db_password` | RDS database password |
-
-### Manual Deployment
-
-Trigger a manual deployment from the GitHub Actions tab:
-
-1. Go to **Actions → Deploy GeoLang Platform → Run workflow**
-2. Select:
-   - **Services**: comma-separated list or `all`
-   - **Environment**: `dev`, `staging`, or `prod`
-   - **Terraform action**: `plan`, `apply`, or `destroy`
-
-### Change Detection
-
-The pipeline automatically detects which services changed:
-
-- Changes in `ptolemy/` → only rebuilds and deploys Ptolemy
-- Changes in `infrastructure/` → runs Terraform plan/apply
-- Changes in multiple services → builds all changed services in parallel
 
 ### Teardown
 
