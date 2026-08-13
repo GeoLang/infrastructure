@@ -206,6 +206,12 @@ variable "service_overrides" {
 
 # ─── Container Images ────────────────────────────────────────────────────────
 
+variable "image_tag" {
+  description = "Tag deployed from every ECR repository. Tags are immutable, so a new build needs a new tag."
+  type        = string
+  default     = "v0.1.0"
+}
+
 variable "container_images" {
   description = "Docker image URIs per service (leave empty to use ECR defaults)"
   type        = map(string)

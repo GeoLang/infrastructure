@@ -34,6 +34,12 @@ The Jupyter image is pinned to `quay.io/jupyter/scipy-notebook:2025-12-31`. That
 
 Ptolemy and Agora use separate encrypted RDS PostgreSQL 16 instances. RDS manages each master password in Secrets Manager. Ptolemy enables its required PostGIS extensions during its own migrations.
 
+Both instances set `rds.force_ssl`, so a plaintext connection is refused. The `ptolemy_database_url` and `agora_database_url` secret values must end in `?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem`, and the service has to be built with a `sqlx` TLS backend.
+
+Do not use `sslmode=require` here. Under `require`, sqlx installs a certificate verifier that accepts any certificate and ignores `sslrootcert`, so the connection is encrypted but the server is never authenticated and anything answering in the database's place can read and rewrite the session. Only `verify-ca` and `verify-full` check the chain.
+
+The URL must name the RDS endpoint directly, since a CNAME in front of it fails hostname verification. Each service image fetches the AWS RDS global CA bundle to the path above during its build.
+
 Agora's separate instance is intentional. Terraform can create it without placing a database administrator credential in configuration or state. It also adds a second instance charge and a second allocation of RDS storage. With the platform profile defaults, changing `db_instance_class`, `db_allocated_storage`, or `db_multi_az` changes the cost of both databases.
 
 EFS access points provide persistent storage for:
@@ -77,6 +83,8 @@ The Jupyter token must also match the token configured in ViewTopia's notebook s
 
 Terraform creates ECR repositories but does not build or push images. Use the repository URLs from `terraform output -json ecr_repositories`.
 
+Repository tags are immutable. A repository rejects a push to a tag it already holds, so every build needs its own tag and there is no moving `latest`. Every service deploys the tag in `image_tag`, which defaults to `v0.1.0`. Push the new tag, then change `image_tag` to roll the platform. The repository lifecycle policy keeps the last ten tags beginning with `v`.
+
 Build these repositories from their existing service contexts:
 
 ```text
@@ -97,13 +105,13 @@ Build the geoplumb wrapper with the same final base image name used in its first
 
 ```bash
 docker build -t geoplumb-base:local ../geoplumb
-docker build --build-arg GEOPLUMB_BASE_IMAGE=geoplumb-base:local -t <geoplumb-ecr-url>:latest containers/geoplumb
+docker build --build-arg GEOPLUMB_BASE_IMAGE=geoplumb-base:local -t <geoplumb-ecr-url>:v0.1.0 containers/geoplumb
 ```
 
 The platform proxy has an explicit build context:
 
 ```bash
-docker build -t <platform-proxy-ecr-url>:latest containers/platform-proxy
+docker build -t <platform-proxy-ecr-url>:v0.1.0 containers/platform-proxy
 ```
 
 GeoLang API and GeoLang executor use the same image. The current `../geolang/Dockerfile` installs dependencies but does not copy the application source because compose bind mounts the repository into `/app/geolang`. Do not set `runtime_secrets_ready` to true until the operator supplies a corrected image that contains the GeoLang source. This is the remaining image blocker for a hosted launch.
@@ -154,7 +162,21 @@ The proxy preserves or strips paths according to the current platform compose co
 - `/jupyter/*` to Jupyter with the path preserved
 - remaining requests to ViewTopia
 
+Every route is gated on an `ENABLE_*` environment variable that Terraform sets from the profile's service toggles. A profile that leaves a service out answers 501 on that service's paths instead of proxying to a Cloud Map name that does not resolve. The gates default to closed, so the proxy serves a route only when the deployment names the service.
+
+The minimal profile runs TileTopia, GeoLang API, and ViewTopia, so its Fenestra, Agora, geoplumb, Jupyter, Geokode, Itinera, Interiora, geodukt, and Ptolemy paths all return 501. One combination stays approximate: when Ptolemy runs and TileTopia does not, TileTopia's `/api/v1` paths reach Ptolemy's catch-all and take its 404 instead of a 501. Neither profile uses that combination.
+
 CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths keep their existing cache policies.
+
+When `enable_cdn` is true, the load balancer admits only the AWS-managed `com.amazonaws.global.cloudfront.origin-facing` prefix list, so the CDN cannot be bypassed by calling the load balancer name directly. That prefix list counts as 55 of a security group's 60 rules, which leaves room for one port. The admitted port is 443 when a domain is configured, because CloudFront then reaches the origin over HTTPS, and 80 otherwise. Without a CDN the load balancer is the only way in and stays open.
+
+## Task network isolation
+
+ECS tasks are split across four security groups.
+
+Most services share one group that reaches every other service, both databases, and the internet. Agora has its own group because it listens on the same port the executor's tool calls use and trusts anything that arrives from inside the VPC. Only the platform proxy and the GeoLang API can reach it, and only Agora can reach the Agora database.
+
+The GeoLang executor has a group whose egress is limited to its tool call targets, DNS, EFS, and outbound HTTPS. Jupyter has a fourth group with no tool call egress at all, since notebooks call no platform service. Both of those run user-supplied code and use a task role that holds no policies.
 
 ## Validation
 
@@ -185,7 +207,8 @@ The GitHub workflow runs the same format and validation checks. Its manual plan 
 The infrastructure can be planned before these are resolved, with all services held at zero:
 
 - The GeoLang image must be changed or supplied so it contains the application source.
-- Every enabled ECR image must be pushed.
+- Ptolemy and Agora must be built with a `sqlx` TLS backend, and their database URL secrets must use `sslmode=verify-full` with `sslrootcert`, or they cannot connect to a database that forces SSL.
+- Every enabled ECR image must be pushed under the tag in `image_tag`.
 - EFS spatial and coverage data must be staged.
 - All required secret containers must have a current value.
 - DNS delegation and ACM validation must complete when the platform profile uses `geolang.com`.

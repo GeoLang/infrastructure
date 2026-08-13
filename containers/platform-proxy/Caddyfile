@@ -1,82 +1,154 @@
+# every route is gated on an ENABLE_* variable the deployment sets for the
+# services it actually runs. a route whose service is absent falls through to
+# the @undeployed block and answers 501 instead of proxying to a name that does
+# not resolve. the gates default to false, so a service is reachable only when
+# the deployment names it.
 :8080 {
 	route {
 		handle /health {
 			respond "ok" 200
 		}
 
-		# handle_path and the /api/* style handles below only match the slashed
-		# form, so send the bare prefix down the same route
+		# the /api/* style handles below only match the slashed form, so send the
+		# bare prefix down the same route
 		@bare_prefix path /agent /tiles /ogc /agora /plumb /jupyter /api /ws /api/geocode /api/indoor /api/delivery
 		rewrite @bare_prefix {path}/
 
-		handle_path /agent/* {
+		@agent {
+			expression {$ENABLE_GEOLANG_API:false}
+			path /agent/*
+		}
+		handle @agent {
+			uri strip_prefix /agent
 			reverse_proxy geolang-api.{$SERVICE_DISCOVERY_NAMESPACE}:8080
 		}
 
-		handle /api/v1/realtime/* {
+		@tiletopia_realtime {
+			expression {$ENABLE_TILETOPIA:false}
+			path /api/v1/realtime/*
+		}
+		handle @tiletopia_realtime {
 			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		handle_path /tiles/* {
-			rewrite * /api{path}
-			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		@tiles {
+			expression {$ENABLE_TILETOPIA:false}
+			path /tiles/*
+		}
+		handle @tiles {
+			# route keeps these in written order: the prefix has to come off
+			# before /api goes on
+			route {
+				uri strip_prefix /tiles
+				rewrite * /api{path}
+				reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+			}
 		}
 
-		handle_path /ogc/* {
+		@ogc {
+			expression {$ENABLE_FENESTRA:false}
+			path /ogc/*
+		}
+		handle @ogc {
+			uri strip_prefix /ogc
 			reverse_proxy fenestra.{$SERVICE_DISCOVERY_NAMESPACE}:8080
 		}
 
-		handle_path /api/delivery/* {
-			rewrite * /delivery{path}
-			reverse_proxy itinera.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		@delivery {
+			expression {$ENABLE_ITINERA:false}
+			path /api/delivery/*
+		}
+		handle @delivery {
+			route {
+				uri strip_prefix /api/delivery
+				rewrite * /delivery{path}
+				reverse_proxy itinera.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+			}
 		}
 
-		@itinera path /api/route /api/route/* /api/isochrone /api/isochrone/* /api/network/*
+		@itinera {
+			expression {$ENABLE_ITINERA:false}
+			path /api/route /api/route/* /api/isochrone /api/isochrone/* /api/network/*
+		}
 		handle @itinera {
 			uri strip_prefix /api
 			reverse_proxy itinera.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		@pipelineRuns path /api/pipeline/runs /api/pipeline/runs/*
+		@pipelineRuns {
+			expression {$ENABLE_GEODUKT:false}
+			path /api/pipeline/runs /api/pipeline/runs/*
+		}
 		handle @pipelineRuns {
 			uri strip_prefix /api/pipeline
 			reverse_proxy geodukt.{$SERVICE_DISCOVERY_NAMESPACE}:8100
 		}
 
-		handle_path /api/indoor/* {
+		@indoor {
+			expression {$ENABLE_INTERIORA:false}
+			path /api/indoor/*
+		}
+		handle @indoor {
+			uri strip_prefix /api/indoor
 			reverse_proxy interiora.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		handle_path /agora/* {
+		@agora {
+			expression {$ENABLE_AGORA:false}
+			path /agora/*
+		}
+		handle @agora {
+			uri strip_prefix /agora
 			reverse_proxy agora.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		handle_path /plumb/* {
+		@plumb {
+			expression {$ENABLE_GEOPLUMB:false}
+			path /plumb/*
+		}
+		handle @plumb {
+			uri strip_prefix /plumb
 			reverse_proxy geoplumb.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		handle_path /api/geocode/* {
+		@geocode {
+			expression {$ENABLE_GEOKODE:false}
+			path /api/geocode/*
+		}
+		handle @geocode {
+			uri strip_prefix /api/geocode
 			reverse_proxy geokode.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		handle /api/v1/auth/oidc/* {
+		@oidc {
+			expression {$ENABLE_PTOLEMY:false}
+			path /api/v1/auth/oidc/*
+		}
+		handle @oidc {
 			reverse_proxy ptolemy.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		@tiletopia path /api/v1/auth/* /api/v1/portal/* /api/v1/assets /api/v1/assets/* /api/v1/terrain/* /api/v1/catalog /api/v1/catalog/*
+		@tiletopia {
+			expression {$ENABLE_TILETOPIA:false}
+			path /api/v1/auth/* /api/v1/portal/* /api/v1/assets /api/v1/assets/* /api/v1/terrain/* /api/v1/catalog /api/v1/catalog/*
+		}
 		handle @tiletopia {
 			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		handle /api/* {
+		@ptolemy {
+			expression {$ENABLE_PTOLEMY:false}
+			path /api/* /ws/*
+		}
+		handle @ptolemy {
 			reverse_proxy ptolemy.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
-		handle /ws/* {
-			reverse_proxy ptolemy.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		@jupyter {
+			expression {$ENABLE_JUPYTER:false}
+			path /jupyter/*
 		}
-
-		handle /jupyter/* {
+		handle @jupyter {
 			reverse_proxy jupyter.{$SERVICE_DISCOVERY_NAMESPACE}:8888
 		}
 
@@ -84,8 +156,21 @@
 			respond 404
 		}
 
+		# anything still carrying a platform prefix here belongs to a service this
+		# deployment does not run
+		@undeployed path /agent/* /tiles/* /ogc/* /agora/* /plumb/* /jupyter/* /api/* /ws/*
+		handle @undeployed {
+			error "this deployment does not run the service that serves this path" 501
+		}
+
 		handle {
 			reverse_proxy viewtopia.{$SERVICE_DISCOVERY_NAMESPACE}:5174
 		}
+	}
+
+	# only the undeployed-route 501 gets a body. upstream failures keep Caddy's
+	# empty response so internal service names stay off the public edge.
+	handle_errors 501 {
+		respond "{err.message}" 501
 	}
 }

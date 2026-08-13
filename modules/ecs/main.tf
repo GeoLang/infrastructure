@@ -60,6 +60,7 @@ variable "services" {
     readonly_root_filesystem = optional(bool, false)
     dropped_capabilities     = optional(list(string), [])
     runs_untrusted_code      = optional(bool, false)
+    security_group_id        = optional(string)
     mount_points = optional(list(object({
       source_volume  = string
       container_path = string
@@ -92,6 +93,13 @@ variable "alb_listener_https_arn" {
 locals {
   public_services = { for name, service in var.services : name => service if service.public }
   secret_arns     = distinct(flatten([for service in values(var.services) : [for secret in service.secrets : secret.valueFrom]]))
+
+  service_security_group_ids = {
+    for name, service in var.services : name => coalesce(
+      service.security_group_id,
+      service.runs_untrusted_code ? var.untrusted_code_security_group_id : var.ecs_security_group_id,
+    )
+  }
 }
 
 # ─── ECS Cluster ──────────────────────────────────────────────────────────────
@@ -412,7 +420,7 @@ resource "aws_ecs_service" "services" {
 
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups  = [each.value.runs_untrusted_code ? var.untrusted_code_security_group_id : var.ecs_security_group_id]
+    security_groups  = [local.service_security_group_ids[each.key]]
     assign_public_ip = false
   }
 

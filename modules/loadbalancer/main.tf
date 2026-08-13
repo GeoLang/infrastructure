@@ -26,31 +26,59 @@ variable "certificate_arn" {
   default     = ""
 }
 
+variable "restrict_ingress_to_cloudfront" {
+  description = "Admit only the CloudFront origin-facing ranges to the ALB"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
 }
 
 # ─── ALB Security Group ──────────────────────────────────────────────────────
+#
+# With a CDN in front, reaching the ALB directly would skip CloudFront's viewer
+# TLS policy, its zero-cache behaviours for authenticated paths, and the origin
+# hostname the certificate is checked against. AWS publishes the origin-facing
+# ranges as a managed prefix list, so the ALB can admit those alone.
+
+data "aws_ec2_managed_prefix_list" "cloudfront_origin_facing" {
+  count = var.restrict_ingress_to_cloudfront ? 1 : 0
+
+  name = "com.amazonaws.global.cloudfront.origin-facing"
+}
+
+locals {
+  # CloudFront reaches the origin over https once the ALB has a certificate,
+  # which is the same condition that names the CDN origin, so it connects on one
+  # port and only that port has to be admitted. Admitting both would fail the
+  # apply: the prefix list counts as 55 of a security group's 60 rules.
+  cloudfront_origin_port = var.certificate_arn != "" ? 443 : 80
+
+  alb_ingress_rules = var.restrict_ingress_to_cloudfront ? [
+    { port = local.cloudfront_origin_port, description = "CloudFront origin-facing ranges" }
+    ] : [
+    { port = 80, description = "HTTP" },
+    { port = 443, description = "HTTPS" },
+  ]
+}
 
 resource "aws_security_group" "alb" {
   name_prefix = "${var.name_prefix}-alb-"
   vpc_id      = var.vpc_id
 
-  ingress {
-    from_port   = 80
-    to_port     = 80
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP"
-  }
-
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTPS"
+  dynamic "ingress" {
+    for_each = local.alb_ingress_rules
+    content {
+      from_port       = ingress.value.port
+      to_port         = ingress.value.port
+      protocol        = "tcp"
+      cidr_blocks     = var.restrict_ingress_to_cloudfront ? [] : ["0.0.0.0/0"]
+      prefix_list_ids = data.aws_ec2_managed_prefix_list.cloudfront_origin_facing[*].id
+      description     = ingress.value.description
+    }
   }
 
   egress {
@@ -121,14 +149,46 @@ resource "aws_security_group" "ecs" {
   }
 }
 
+# ─── Agora Security Group ────────────────────────────────────────────────────
+#
+# Agora listens on 3000, the same port the executor's tool calls reach in the
+# shared ECS group, and it authenticates nothing that arrives from inside the
+# VPC. Its own group keeps that traffic to the callers that route user requests,
+# the platform proxy and the geolang API, both of which sit in the ECS group.
+
+resource "aws_security_group" "agora" {
+  name_prefix = "${var.name_prefix}-agora-"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs.id]
+    description     = "Session traffic from the platform proxy and the geolang API"
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-agora-sg" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # ─── Untrusted Code Security Group ───────────────────────────────────────────
 #
-# Services that run user-supplied code (the geolang executor and jupyter) sit
-# here instead of the shared ECS group, which reaches every service and both RDS
-# instances. Egress is only what the executor's tools call plus what Fargate
-# needs over the task ENI. This group cannot reference the ECS group, because
-# the ECS group already references this one and terraform would see a cycle, so
-# its own inbound rules name the VPC CIDR instead.
+# The geolang executor sits here instead of the shared ECS group, which reaches
+# every service and both RDS instances. Egress is only what the executor's tools
+# call plus what Fargate needs over the task ENI. This group cannot reference
+# the ECS group, because the ECS group already references this one and terraform
+# would see a cycle, so its own inbound rules name the VPC CIDR instead.
 
 resource "aws_security_group" "untrusted_code" {
   name_prefix = "${var.name_prefix}-untrusted-code-"
@@ -140,14 +200,6 @@ resource "aws_security_group" "untrusted_code" {
     protocol    = "tcp"
     cidr_blocks = [var.vpc_cidr]
     description = "Executor runs from geolang-api"
-  }
-
-  ingress {
-    from_port   = 8888
-    to_port     = 8888
-    protocol    = "tcp"
-    cidr_blocks = [var.vpc_cidr]
-    description = "Jupyter from the platform proxy"
   }
 
   # image pulls, secrets and log delivery all leave over the task ENI, and the
@@ -201,6 +253,63 @@ resource "aws_security_group" "untrusted_code" {
   }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-untrusted-code-sg" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# ─── Jupyter Security Group ──────────────────────────────────────────────────
+#
+# Jupyter also runs user-supplied code, but it calls no platform service, so it
+# gets none of the executor group's tool-call egress. Notebooks reach the
+# internet on 443 the same way the executor does.
+
+resource "aws_security_group" "jupyter" {
+  name_prefix = "${var.name_prefix}-jupyter-"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port       = 8888
+    to_port         = 8888
+    protocol        = "tcp"
+    security_groups = [aws_security_group.ecs.id]
+    description     = "Notebook traffic from the platform proxy"
+  }
+
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS to ECR, Secrets Manager, CloudWatch and package indexes"
+  }
+
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Cloud Map and public name resolution"
+  }
+
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Cloud Map and public name resolution"
+  }
+
+  egress {
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "EFS mounts"
+  }
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-jupyter-sg" })
 
   lifecycle {
     create_before_destroy = true
@@ -302,4 +411,12 @@ output "ecs_security_group_id" {
 
 output "untrusted_code_security_group_id" {
   value = aws_security_group.untrusted_code.id
+}
+
+output "agora_security_group_id" {
+  value = aws_security_group.agora.id
+}
+
+output "jupyter_security_group_id" {
+  value = aws_security_group.jupyter.id
 }

@@ -75,12 +75,17 @@ environment  = "prod"      # dev | staging | prod
 # }
 
 # ─── Container Images ───────────────────────────────────────────────────────
+# The tag every ECR service deploys. ECR repositories reject a tag that already
+# exists, so push a new tag per build and change this to roll the platform.
+
+# image_tag = "v0.1.0"
+
 # Override container images (useful for CI/CD or external registries).
 # If not set, uses ECR repositories created by Terraform.
 
 # container_images = {
-#   ptolemy   = "ghcr.io/geolang/ptolemy:latest"
-#   tiletopia = "ghcr.io/geolang/tiletopia:latest"
+#   ptolemy   = "ghcr.io/geolang/ptolemy:v0.1.0"
+#   tiletopia = "ghcr.io/geolang/tiletopia:v0.1.0"
 # }
 
 # Jupyter is not built from this repo and has no ECR repository, so it is pinned

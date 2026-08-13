@@ -63,7 +63,7 @@ locals {
   ])
 
   ecr_service_images = {
-    for service in local.ecr_services : service => "${module.ecr.repository_urls[service]}:latest"
+    for service in local.ecr_services : service => "${module.ecr.repository_urls[service]}:${var.image_tag}"
   }
   geolang_executor_image = lookup(
     var.container_images,
@@ -90,6 +90,25 @@ locals {
 
   # ── Service discovery DNS suffix ────────────────────────────────
   sd_suffix = "${var.project_name}-${var.environment}.local"
+
+  # ── Platform proxy route gates ──────────────────────────────────
+  # The proxy gates every route on one of these, so a profile that leaves a
+  # service out answers 501 on its paths instead of proxying to a Cloud Map
+  # name that does not resolve. The keys are the ENABLE_* variables its
+  # Caddyfile reads, and the gates are closed unless named here.
+  proxy_route_gates = {
+    ENABLE_PTOLEMY     = var.enable_ptolemy
+    ENABLE_TILETOPIA   = var.enable_tiletopia
+    ENABLE_GEOKODE     = var.enable_geokode
+    ENABLE_ITINERA     = var.enable_itinera
+    ENABLE_INTERIORA   = var.enable_interiora
+    ENABLE_GEOPLUMB    = var.enable_geoplumb
+    ENABLE_FENESTRA    = var.enable_fenestra
+    ENABLE_AGORA       = var.enable_agora
+    ENABLE_GEODUKT     = var.enable_geodukt
+    ENABLE_GEOLANG_API = var.enable_geolang
+    ENABLE_JUPYTER     = var.enable_jupyter
+  }
 
   # ── Database URL (only when RDS is enabled) ─────────────────────
   platform_origin = (
@@ -189,7 +208,9 @@ module "loadbalancer" {
   # the ALB needs a certificate from its own region, not the us-east-1 one
   # CloudFront requires
   certificate_arn = var.enable_dns && var.domain_name != "" ? module.dns[0].alb_certificate_arn : ""
-  tags            = local.tags
+  # without a CDN the ALB is the only way in, so it has to stay open
+  restrict_ingress_to_cloudfront = var.enable_cdn
+  tags                           = local.tags
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -223,7 +244,7 @@ module "agora_database" {
   name_prefix           = "${local.name_prefix}-agora"
   vpc_id                = module.networking.vpc_id
   private_subnet_ids    = module.networking.private_subnet_ids
-  ecs_security_group_id = module.loadbalancer.ecs_security_group_id
+  ecs_security_group_id = module.loadbalancer.agora_security_group_id
 
   instance_class    = var.db_instance_class
   allocated_storage = var.db_allocated_storage
@@ -439,12 +460,13 @@ module "ecs" {
 
     var.enable_agora ? {
       agora = {
-        image          = local.service_images["agora"]
-        cpu            = local.service_sizing["agora"].cpu
-        memory         = local.service_sizing["agora"].memory
-        desired_count  = var.runtime_secrets_ready ? local.service_sizing["agora"].desired_count : 0
-        container_port = 3000
-        health_path    = "/health"
+        image             = local.service_images["agora"]
+        cpu               = local.service_sizing["agora"].cpu
+        memory            = local.service_sizing["agora"].memory
+        desired_count     = var.runtime_secrets_ready ? local.service_sizing["agora"].desired_count : 0
+        container_port    = 3000
+        health_path       = "/health"
+        security_group_id = module.loadbalancer.agora_security_group_id
         environment = [
           { name = "PORT", value = "3000" },
           { name = "RUST_LOG", value = "info" },
@@ -603,6 +625,7 @@ module "ecs" {
         health_path         = "/jupyter/api"
         health_command      = ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8888/jupyter/api || exit 1"]
         runs_untrusted_code = true
+        security_group_id   = module.loadbalancer.jupyter_security_group_id
         command = [
           "start-notebook.py",
           "--ServerApp.base_url=/jupyter",
@@ -646,9 +669,10 @@ module "ecs" {
         health_path    = "/health"
         health_command = ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
         public         = true
-        environment = [
-          { name = "SERVICE_DISCOVERY_NAMESPACE", value = local.sd_suffix },
-        ]
+        environment = concat(
+          [{ name = "SERVICE_DISCOVERY_NAMESPACE", value = local.sd_suffix }],
+          [for gate, enabled in local.proxy_route_gates : { name = gate, value = tostring(enabled) }],
+        )
       }
     } : {},
   )
@@ -861,6 +885,7 @@ module "storage" {
   ecs_security_group_ids = [
     module.loadbalancer.ecs_security_group_id,
     module.loadbalancer.untrusted_code_security_group_id,
+    module.loadbalancer.jupyter_security_group_id,
   ]
   access_points = local.persistent_access_points
 

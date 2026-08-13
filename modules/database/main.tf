@@ -151,9 +151,11 @@ resource "aws_db_parameter_group" "postgis" {
     value = "pg_stat_statements"
   }
 
+  # the database URL secrets have to carry sslmode=require to match, and the
+  # client has to be built with a TLS backend or every connection is refused
   parameter {
     name  = "rds.force_ssl"
-    value = "0" # Disable for internal VPC traffic, enable in production
+    value = "1"
   }
 
   tags = var.tags
