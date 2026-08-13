@@ -1,4 +1,4 @@
-# GeoLang Infrastructure — Example Configuration
+# GeoLang Infrastructure - Example Configuration
 #
 # Copy this file to terraform.tfvars and customize:
 #   cp terraform.tfvars.example terraform.tfvars
@@ -21,9 +21,8 @@ environment  = "prod"      # dev | staging | prod
 # domain_name = "geolang.com"
 
 # ─── Database ────────────────────────────────────────────────────────────────
-# Required when enable_ptolemy = true. Password MUST be set.
-
-db_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"
+# RDS manages its master password in Secrets Manager. Runtime database URLs and
+# application credentials must be populated outside Terraform. See README.md.
 
 # db_instance_class    = "db.t4g.micro"   # ~$12/month
 # db_allocated_storage = 20               # GB, auto-scales to 2x
@@ -38,8 +37,19 @@ db_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"
 # enable_itinera   = false   # Routing
 # enable_interiora = false   # Indoor maps + indoor routing
 # enable_geoplumb  = false   # Windowed raster tiles over STAC
+# enable_fenestra  = false   # OGC service gateway
+# enable_agora     = false   # Live collaboration and an isolated RDS instance
+# enable_sibyl     = false   # Agent loop
+# enable_geodukt   = false   # Workflow runner
+# enable_geolang_executor = false # Isolated tool executor
+# enable_jupyter   = false   # Notebook kernels
 # enable_geolang   = true    # AI agent
 # enable_viewtopia = true    # Web frontend
+# enable_platform_proxy = true # Public path-routing edge
+
+# Keep services stopped until images, data, and every required secret value are
+# ready.
+# runtime_secrets_ready = false
 
 # ─── Fargate Sizing ──────────────────────────────────────────────────────────
 # Default sizing for all services. Override per-service with service_overrides.
@@ -58,7 +68,7 @@ db_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"
 # }
 
 # service_overrides = {
-#   geolang = {
+#   geolang-api = {
 #     cpu    = 1024
 #     memory = 2048
 #   }
@@ -71,6 +81,22 @@ db_password = "CHANGE_ME_TO_A_STRONG_PASSWORD"
 # container_images = {
 #   ptolemy   = "ghcr.io/geolang/ptolemy:latest"
 #   tiletopia = "ghcr.io/geolang/tiletopia:latest"
+# }
+
+# Jupyter is not built from this repo and has no ECR repository, so it is pinned
+# on its own. Pin a dated tag rather than latest.
+# jupyter_image = "quay.io/jupyter/scipy-notebook:2025-12-31"
+
+# ─── Runtime Secrets ─────────────────────────────────────────────────────────
+# With enable_secrets = true Terraform creates an empty Secrets Manager entry per
+# enabled service and you write the values outside Terraform. To use secrets you
+# already manage, name them here instead and they win over the created ones.
+#
+# Names: platform_jwt, ptolemy_database_url, agora_database_url,
+# geolang_executor, llm_api_key, jupyter_token.
+
+# runtime_secret_arns = {
+#   platform_jwt = "arn:aws:secretsmanager:us-east-1:123456789012:secret:platform-jwt-AbCdEf"
 # }
 
 # ─── CDN ──────────────────────────────────────────────────────────────────────

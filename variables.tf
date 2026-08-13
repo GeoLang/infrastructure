@@ -1,4 +1,4 @@
-# GeoLang Infrastructure — Input Variables
+# GeoLang Infrastructure - Input Variables
 #
 # All configurable parameters for the GeoLang platform deployment.
 # Override defaults via terraform.tfvars or -var flags.
@@ -80,6 +80,48 @@ variable "enable_geoplumb" {
   default     = false
 }
 
+variable "enable_fenestra" {
+  description = "Deploy Fenestra OGC services gateway"
+  type        = bool
+  default     = false
+}
+
+variable "enable_agora" {
+  description = "Deploy Agora live collaboration service and its database"
+  type        = bool
+  default     = false
+}
+
+variable "enable_sibyl" {
+  description = "Deploy Sibyl agent loop service"
+  type        = bool
+  default     = false
+}
+
+variable "enable_geodukt" {
+  description = "Deploy Geodukt pipeline service"
+  type        = bool
+  default     = false
+}
+
+variable "enable_geolang_executor" {
+  description = "Deploy the isolated GeoLang tool executor"
+  type        = bool
+  default     = false
+}
+
+variable "enable_jupyter" {
+  description = "Deploy Jupyter kernels for ViewTopia notebooks"
+  type        = bool
+  default     = false
+}
+
+variable "enable_platform_proxy" {
+  description = "Deploy the public edge proxy that applies platform path rewrites"
+  type        = bool
+  default     = true
+}
+
 variable "enable_geolang" {
   description = "Deploy GeoLang AI agent"
   type        = bool
@@ -130,12 +172,6 @@ variable "db_username" {
   default     = "ptolemy"
 }
 
-variable "db_password" {
-  description = "PostgreSQL master password (use SSM Parameter Store in production)"
-  type        = string
-  sensitive   = true
-}
-
 variable "db_multi_az" {
   description = "Enable Multi-AZ for RDS (production HA)"
   type        = bool
@@ -172,6 +208,24 @@ variable "service_overrides" {
 
 variable "container_images" {
   description = "Docker image URIs per service (leave empty to use ECR defaults)"
+  type        = map(string)
+  default     = {}
+}
+
+variable "jupyter_image" {
+  description = "Pinned Jupyter Docker Stacks image"
+  type        = string
+  default     = "quay.io/jupyter/scipy-notebook:2025-12-31"
+}
+
+variable "runtime_secrets_ready" {
+  description = "Start services after images, data, and runtime secrets are ready"
+  type        = bool
+  default     = false
+}
+
+variable "runtime_secret_arns" {
+  description = "Existing Secrets Manager or SSM ARNs keyed by runtime secret name"
   type        = map(string)
   default     = {}
 }
@@ -260,7 +314,7 @@ variable "enable_waf" {
 }
 
 variable "waf_rate_limit" {
-  description = "WAF rate limit — max requests per 5-minute window per IP"
+  description = "WAF rate limit, max requests per 5-minute window per IP"
   type        = number
   default     = 2000
 }

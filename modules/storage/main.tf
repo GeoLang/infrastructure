@@ -1,4 +1,4 @@
-# GeoLang Infrastructure — EFS Storage Module
+# GeoLang Infrastructure - EFS Storage Module
 #
 # Elastic File System for persistent shared storage across
 # ECS Fargate tasks. Used for TileTopia data and GeoLang cache.
@@ -15,9 +15,9 @@ variable "private_subnet_ids" {
   type = list(string)
 }
 
-variable "ecs_security_group_id" {
-  description = "Security group of ECS tasks that need EFS access"
-  type        = string
+variable "ecs_security_group_ids" {
+  description = "Security groups of ECS tasks that need EFS access"
+  type        = list(string)
 }
 
 variable "performance_mode" {
@@ -37,6 +37,17 @@ variable "tags" {
   default = {}
 }
 
+variable "access_points" {
+  description = "Per-workload EFS roots"
+  type = map(object({
+    path        = string
+    uid         = number
+    gid         = number
+    permissions = optional(string, "0755")
+  }))
+  default = {}
+}
+
 # ─── Security Group ──────────────────────────────────────────────────────────
 
 resource "aws_security_group" "efs" {
@@ -47,7 +58,7 @@ resource "aws_security_group" "efs" {
     from_port       = 2049
     to_port         = 2049
     protocol        = "tcp"
-    security_groups = [var.ecs_security_group_id]
+    security_groups = var.ecs_security_group_ids
     description     = "NFS from ECS tasks"
   }
 
@@ -96,44 +107,26 @@ resource "aws_efs_mount_target" "main" {
 
 # ─── Access Points (per-service isolation) ────────────────────────────────────
 
-resource "aws_efs_access_point" "tiletopia" {
+resource "aws_efs_access_point" "services" {
+  for_each = var.access_points
+
   file_system_id = aws_efs_file_system.main.id
 
   posix_user {
-    gid = 1000
-    uid = 1000
+    gid = each.value.gid
+    uid = each.value.uid
   }
 
   root_directory {
-    path = "/tiletopia"
+    path = each.value.path
     creation_info {
-      owner_gid   = 1000
-      owner_uid   = 1000
-      permissions = "0755"
+      owner_gid   = each.value.gid
+      owner_uid   = each.value.uid
+      permissions = each.value.permissions
     }
   }
 
-  tags = merge(var.tags, { Name = "${var.name_prefix}-tiletopia-ap", Service = "tiletopia" })
-}
-
-resource "aws_efs_access_point" "geolang" {
-  file_system_id = aws_efs_file_system.main.id
-
-  posix_user {
-    gid = 1000
-    uid = 1000
-  }
-
-  root_directory {
-    path = "/geolang"
-    creation_info {
-      owner_gid   = 1000
-      owner_uid   = 1000
-      permissions = "0755"
-    }
-  }
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-geolang-ap", Service = "geolang" })
+  tags = merge(var.tags, { Name = "${var.name_prefix}-${each.key}-ap", Workload = each.key })
 }
 
 # ─── EFS Backup Policy ───────────────────────────────────────────────────────
@@ -160,10 +153,7 @@ output "file_system_arn" {
 
 output "access_points" {
   description = "EFS access point IDs per service"
-  value = {
-    tiletopia = aws_efs_access_point.tiletopia.id
-    geolang   = aws_efs_access_point.geolang.id
-  }
+  value       = { for name, access_point in aws_efs_access_point.services : name => access_point.id }
 }
 
 output "security_group_id" {

@@ -1,38 +1,7 @@
-# GeoLang Infrastructure — Secrets Manager Module
-#
-# AWS Secrets Manager for database credentials with automatic
-# rotation. Stores secrets as JSON and provides SSM parameter
-# references for ECS task definitions.
+# GeoLang Infrastructure, Secrets Manager Module
 
 variable "name_prefix" {
   type = string
-}
-
-variable "db_username" {
-  type = string
-}
-
-variable "db_password" {
-  type      = string
-  sensitive = true
-}
-
-variable "db_host" {
-  description = "RDS endpoint hostname"
-  type        = string
-  default     = ""
-}
-
-variable "db_port" {
-  description = "RDS port"
-  type        = number
-  default     = 5432
-}
-
-variable "db_name" {
-  description = "Database name"
-  type        = string
-  default     = "ptolemy"
 }
 
 variable "tags" {
@@ -40,62 +9,37 @@ variable "tags" {
   default = {}
 }
 
-# ─── Database Credentials Secret ─────────────────────────────────────────────
-
-resource "aws_secretsmanager_secret" "db_credentials" {
-  name        = "${var.name_prefix}/database/credentials"
-  description = "GeoLang Platform — RDS PostGIS credentials"
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-db-credentials" })
+variable "secret_names" {
+  description = "Runtime secrets to create"
+  type        = set(string)
+  default     = []
 }
 
-resource "aws_secretsmanager_secret_version" "db_credentials" {
-  secret_id = aws_secretsmanager_secret.db_credentials.id
-  secret_string = jsonencode({
-    username = var.db_username
-    password = var.db_password
-    host     = var.db_host
-    port     = var.db_port
-    dbname   = var.db_name
-    engine   = "postgres"
-  })
-}
-
-# ─── API Keys Secret (placeholder) ───────────────────────────────────────────
-
-resource "aws_secretsmanager_secret" "api_keys" {
-  name        = "${var.name_prefix}/api-keys"
-  description = "GeoLang Platform — API keys for external services (LLM providers, etc.)"
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-api-keys" })
-}
-
-resource "aws_secretsmanager_secret_version" "api_keys" {
-  secret_id = aws_secretsmanager_secret.api_keys.id
-  secret_string = jsonencode({
-    xai_api_key    = ""
-    openai_api_key = ""
-    groq_api_key   = ""
-  })
-
-  lifecycle {
-    ignore_changes = [secret_string]
+locals {
+  runtime_secrets = {
+    platform_jwt         = "Shared HS256 platform signing secret"
+    ptolemy_database_url = "Ptolemy PostgreSQL connection URL"
+    agora_database_url   = "Agora PostgreSQL connection URL"
+    geolang_executor     = "Shared GeoLang API to executor credential"
+    llm_api_key          = "Sibyl OpenAI-compatible provider API key"
+    jupyter_token        = "ViewTopia Jupyter server token"
   }
 }
 
-# ─── Outputs ──────────────────────────────────────────────────────────────────
+resource "aws_secretsmanager_secret" "runtime" {
+  for_each = var.secret_names
 
-output "db_credentials_arn" {
-  description = "Secrets Manager ARN for database credentials"
-  value       = aws_secretsmanager_secret.db_credentials.arn
+  name        = "${var.name_prefix}/${replace(each.key, "_", "-")}"
+  description = local.runtime_secrets[each.key]
+
+  # terraform only creates the container and the values are written out of band,
+  # so a scheduled deletion would just block recreating the same name
+  recovery_window_in_days = 0
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-${replace(each.key, "_", "-")}" })
 }
 
-output "api_keys_arn" {
-  description = "Secrets Manager ARN for API keys"
-  value       = aws_secretsmanager_secret.api_keys.arn
-}
-
-output "db_credentials_secret_id" {
-  description = "Secrets Manager secret ID for DB credentials"
-  value       = aws_secretsmanager_secret.db_credentials.id
+output "secret_arns" {
+  description = "Runtime secret ARNs keyed by purpose"
+  value       = { for name, secret in aws_secretsmanager_secret.runtime : name => secret.arn }
 }

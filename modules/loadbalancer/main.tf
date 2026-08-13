@@ -12,6 +12,10 @@ variable "vpc_id" {
   type = string
 }
 
+variable "vpc_cidr" {
+  type = string
+}
+
 variable "public_subnet_ids" {
   type = list(string)
 }
@@ -87,6 +91,22 @@ resource "aws_security_group" "ecs" {
     description = "Inter-service communication"
   }
 
+  ingress {
+    from_port       = 3000
+    to_port         = 3000
+    protocol        = "tcp"
+    security_groups = [aws_security_group.untrusted_code.id]
+    description     = "Tool calls from untrusted code to ptolemy, tiletopia, geokode and itinera"
+  }
+
+  ingress {
+    from_port       = 8100
+    to_port         = 8100
+    protocol        = "tcp"
+    security_groups = [aws_security_group.untrusted_code.id]
+    description     = "Workflow calls from untrusted code to geodukt"
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -95,6 +115,92 @@ resource "aws_security_group" "ecs" {
   }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-ecs-sg" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+# ─── Untrusted Code Security Group ───────────────────────────────────────────
+#
+# Services that run user-supplied code (the geolang executor and jupyter) sit
+# here instead of the shared ECS group, which reaches every service and both RDS
+# instances. Egress is only what the executor's tools call plus what Fargate
+# needs over the task ENI. This group cannot reference the ECS group, because
+# the ECS group already references this one and terraform would see a cycle, so
+# its own inbound rules name the VPC CIDR instead.
+
+resource "aws_security_group" "untrusted_code" {
+  name_prefix = "${var.name_prefix}-untrusted-code-"
+  vpc_id      = var.vpc_id
+
+  ingress {
+    from_port   = 8081
+    to_port     = 8081
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Executor runs from geolang-api"
+  }
+
+  ingress {
+    from_port   = 8888
+    to_port     = 8888
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Jupyter from the platform proxy"
+  }
+
+  # image pulls, secrets and log delivery all leave over the task ENI, and the
+  # download tools read OSM, Natural Earth and GHS-POP over https
+  egress {
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "HTTPS to ECR, Secrets Manager, CloudWatch and remote data sources"
+  }
+
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "udp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Cloud Map and public name resolution"
+  }
+
+  egress {
+    from_port   = 53
+    to_port     = 53
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "Cloud Map and public name resolution"
+  }
+
+  egress {
+    from_port   = 2049
+    to_port     = 2049
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "EFS mounts"
+  }
+
+  egress {
+    from_port   = 3000
+    to_port     = 3000
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "ptolemy, tiletopia, geokode and itinera tool calls"
+  }
+
+  egress {
+    from_port   = 8100
+    to_port     = 8100
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+    description = "geodukt workflow calls"
+  }
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-untrusted-code-sg" })
 
   lifecycle {
     create_before_destroy = true
@@ -192,4 +298,8 @@ output "alb_security_group_id" {
 
 output "ecs_security_group_id" {
   value = aws_security_group.ecs.id
+}
+
+output "untrusted_code_security_group_id" {
+  value = aws_security_group.untrusted_code.id
 }

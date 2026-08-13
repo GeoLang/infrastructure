@@ -1,565 +1,193 @@
-# GeoLang Infrastructure
+# GeoLang AWS infrastructure
 
-One-click AWS deployment for the **GeoLang Intelligent Geospatial Suite** — agent-driven GIS intelligence.
+This Terraform stack deploys the GeoLang platform to AWS. The full profile matches the current ViewTopia platform compose path for the flagship viewer, collaboration, notebook, and agent workflows.
 
-## Architecture
+Terraform does not build images, populate secret values, load spatial data, create application users, or run database migrations itself. ECS services start at a desired count of zero until `runtime_secrets_ready` is set to `true`.
 
+## Full platform
+
+`profiles/platform.tfvars` enables:
+
+- ViewTopia
+- the Caddy platform proxy
+- Ptolemy
+- TileTopia
+- Fenestra
+- Geokode
+- Itinera
+- Interiora
+- Agora
+- geoplumb
+- Sibyl
+- geodukt
+- GeoLang API
+- GeoLang executor
+- Jupyter
+
+CloudFront sends requests to an Application Load Balancer. The load balancer has one catch-all target, the platform proxy. The proxy applies the same prefix rewrites as `viewtopia/deploy/nginx-platform.conf`, then resolves private ECS services through Cloud Map.
+
+The proxy image is buildable from [containers/platform-proxy](containers/platform-proxy). Its Caddy image is pinned to `caddy:2.11.4-alpine`.
+
+The Jupyter image is pinned to `quay.io/jupyter/scipy-notebook:2025-12-31`. That tag is documented by the official Jupyter Docker Stacks project. Jupyter keeps the `/jupyter` prefix so its kernel WebSocket URLs continue to work through CloudFront and the proxy.
+
+## Databases and storage
+
+Ptolemy and Agora use separate encrypted RDS PostgreSQL 16 instances. RDS manages each master password in Secrets Manager. Ptolemy enables its required PostGIS extensions during its own migrations.
+
+Agora's separate instance is intentional. Terraform can create it without placing a database administrator credential in configuration or state. It also adds a second instance charge and a second allocation of RDS storage. With the platform profile defaults, changing `db_instance_class`, `db_allocated_storage`, or `db_multi_az` changes the cost of both databases.
+
+EFS access points provide persistent storage for:
+
+- TileTopia data
+- Geokode and Itinera spatial source data
+- Interiora venue data
+- geoplumb's disk cache
+- Fenestra coverages
+- Sibyl's SQLite database
+- GeoLang's cache
+- GeoLang outputs, user data, and live data shared with geodukt and the executor
+- Jupyter notebooks under `/home/jovyan/work`
+
+Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point.
+
+geoplumb uses a real public STAC layer configuration copied into its wrapper image from [containers/geoplumb/layers.toml](containers/geoplumb/layers.toml). The configuration has no credentials. Its image is built in two steps so the configuration is part of an immutable deployable artifact.
+
+## Runtime secrets
+
+No credential belongs in a Terraform value, generated file, image command, or process argument. ECS injects runtime values from AWS Secrets Manager or SSM Parameter Store.
+
+When `enable_secrets` is true, Terraform creates the empty Secrets Manager resources needed by the enabled services. The full profile uses these keys:
+
+- `platform_jwt`, shared by the platform JWT issuers and validators
+- `ptolemy_database_url`, the complete Ptolemy PostgreSQL URL
+- `agora_database_url`, the complete Agora PostgreSQL URL
+- `geolang_executor`, shared only by the GeoLang API and executor
+- `llm_api_key`, exposed to Sibyl as `XAI_API_KEY`
+- `jupyter_token`, exposed to Jupyter as `JUPYTER_TOKEN`
+
+Terraform deliberately creates no secret versions. Populate the values outside Terraform after the first infrastructure apply. The two database URL secrets can be assembled from the corresponding RDS endpoint and RDS managed credential secret. Keep those URLs out of shell arguments and command history. The AWS console or a command that reads the value from standard input is appropriate.
+
+Existing secret resources can be supplied through `runtime_secret_arns`. Keys in that map override Terraform-managed secret ARNs. If an existing secret uses a customer managed KMS key, grant the ECS execution role permission to decrypt it.
+
+`runtime_secrets_ready = true` is an operator assertion. Terraform verifies that an ARN exists for every secret required by the enabled services. Terraform cannot verify that an externally populated secret contains a usable value. Leave the flag false until all image, data, and secret inputs are ready. This keeps empty managed secrets and empty ECR repositories from causing ECS restart loops.
+
+The Jupyter token must also match the token configured in ViewTopia's notebook settings. Do not put the token in a frontend build argument.
+
+## Image build map
+
+Terraform creates ECR repositories but does not build or push images. Use the repository URLs from `terraform output -json ecr_repositories`.
+
+Build these repositories from their existing service contexts:
+
+```text
+ptolemy          ../ptolemy
+tiletopia        ../tiletopia
+geokode          ../geokode
+itinera          ../itinera
+interiora        ../interiora
+fenestra         ../fenestra
+agora            ../agora
+sibyl            ../sibyl
+geodukt          ../geodukt
+viewtopia        ../viewtopia
+platform-proxy   containers/platform-proxy
 ```
-                    ┌──────────────────────────────────────┐
-                    │         geolang.com (Route53)         │
-                    │         ACM TLS Certificate           │
-                    └──────────────┬───────────────────────┘
-                                   │
-                    ┌──────────────▼───────────────────────┐
-                    │        CloudFront CDN                 │
-                    │   (tile caching at 50+ edge PoPs)     │
-                    └──────────────┬───────────────────────┘
-                                   │
-    ┌──────────────────────────────▼───────────────────────────────┐
-    │              Application Load Balancer                       │
-    │            (path-based routing to services)                  │
-    │                                                              │
-    │   /agent/*       → GeoLang AI Agent     (port 8080)         │
-    │   /tiles/*       → TileTopia 3D Tiles   (port 3000)         │
-    │   /api/geocode/* → Geokode Geocoding    (port 3000)         │
-    │   /api/route*    → Itinera Routing      (port 3000)         │
-    │   /api/*         → Ptolemy Geodatabase  (port 3000)         │
-    │   /*             → ViewTopia Frontend   (port 5174)         │
-    └──────────────────────────────┬───────────────────────────────┘
-                                   │
-    ┌──────────────────────────────▼───────────────────────────────┐
-    │                  ECS Fargate (Private Subnets)                │
-    │                                                              │
-    │   ┌───────────┐ ┌───────────┐ ┌───────────┐ ┌───────────┐  │
-    │   │ ViewTopia │ │  Ptolemy  │ │ TileTopia │ │  GeoLang  │  │
-    │   │  (Nginx)  │ │  (Rust)   │ │  (Rust)   │ │ (Python)  │  │
-    │   └───────────┘ └───────────┘ └───────────┘ └───────────┘  │
-    │   ┌───────────┐ ┌───────────┐                              │
-    │   │  Geokode  │ │  Itinera  │                              │
-    │   │  (Rust)   │ │  (Rust)   │                              │
-    │   └───────────┘ └───────────┘                              │
-    │   Service Discovery: *.geolang-prod.local (Cloud Map)       │
-    └──────────────────────────────┬───────────────────────────────┘
-                                   │
-    ┌──────────────────────────────▼───────────────────────────────┐
-    │          RDS PostgreSQL 16 + PostGIS (Private Subnets)       │
-    │                  (encrypted, auto-backup)                    │
-    └─────────────────────────────────────────────────────────────┘
-```
 
-## Services
-
-| Service | Description | Port | Language | Required |
-|---------|-------------|------|----------|----------|
-| **ViewTopia** | Web frontend — CesiumJS, MapLibre GL, deck.gl | 5174 | Node/Nginx | Yes |
-| **Ptolemy** | Enterprise geodatabase API + geoprocessing | 3000 | Rust | Platform |
-| **TileTopia** | 3D Tiles, terrain, point cloud, asset server | 3000 | Rust | Yes |
-| **Geokode** | Forward/reverse geocoding | 3000 | Rust | Platform |
-| **Itinera** | Routing, isochrones, delivery optimization | 3000 | Rust | Platform |
-| **GeoLang** | AI/NLP geospatial agent (QGIS) | 8080 | Python | Yes |
-| **PostGIS** | PostgreSQL 16 with PostGIS extensions | 5432 | — | Platform |
-
-## Prerequisites
-
-- [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5
-- [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) v2 configured with credentials
-- [Docker](https://docs.docker.com/get-docker/) for building container images
-- An AWS account with permissions for ECS, RDS, S3, CloudFront, Route53, IAM, VPC
-
-## Quick Start
-
-### 1. Configure
+Build the geoplumb wrapper with the same final base image name used in its first build:
 
 ```bash
-cd infrastructure/
+docker build -t geoplumb-base:local ../geoplumb
+docker build --build-arg GEOPLUMB_BASE_IMAGE=geoplumb-base:local -t <geoplumb-ecr-url>:latest containers/geoplumb
+```
+
+The platform proxy has an explicit build context:
+
+```bash
+docker build -t <platform-proxy-ecr-url>:latest containers/platform-proxy
+```
+
+GeoLang API and GeoLang executor use the same image. The current `../geolang/Dockerfile` installs dependencies but does not copy the application source because compose bind mounts the repository into `/app/geolang`. Do not set `runtime_secrets_ready` to true until the operator supplies a corrected image that contains the GeoLang source. This is the remaining image blocker for a hosted launch.
+
+Jupyter pulls its pinned Quay image directly and has no ECR repository.
+
+## Deployment sequence
+
+Copy the example and choose a profile:
+
+```bash
 cp terraform.tfvars.example terraform.tfvars
-```
-
-Edit `terraform.tfvars` with your settings. At minimum, set:
-
-```hcl
-db_password = "your-strong-password-here"
-```
-
-### 2. Deploy
-
-```bash
-# Initialize Terraform
 terraform init
-
-# Preview changes
-terraform plan
-
-# Deploy everything
-terraform apply
+terraform plan -var-file=profiles/platform.tfvars
 ```
 
-### 3. Build & Push Images
+The first apply must keep `runtime_secrets_ready = false`. It creates the network, databases, EFS access points, ECR repositories, secret containers, task definitions, and zero-count ECS services.
 
-After `terraform apply`, the output includes deployment commands. The essential steps:
+After that apply:
+
+1. Build and push every enabled ECR image.
+2. Stage the required files in EFS.
+3. Populate all required runtime secret values.
+4. Confirm the ViewTopia Jupyter setting uses the deployed token.
+5. Set `runtime_secrets_ready = true`.
+6. Review a new plan before applying it.
+
+Terraform outputs the RDS endpoints, RDS managed credential secret ARNs, runtime secret ARNs, ECR repositories, and EFS access points needed for those steps.
+
+Do not use `terraform apply -auto-approve` for the readiness transition. A normal plan makes the service scale-up visible before it changes AWS.
+
+## Routing
+
+The proxy preserves or strips paths according to the current platform compose contract:
+
+- `/agent/*` to GeoLang API with `/agent` removed
+- `/api/v1/realtime/*` to TileTopia with the path preserved
+- `/tiles/*` to TileTopia as `/api/*`
+- `/ogc/*` to Fenestra with `/ogc` removed
+- `/api/delivery/*`, `/api/route`, `/api/isochrone`, and `/api/network/*` to Itinera
+- `/api/pipeline/runs*` to geodukt as `/runs*`
+- `/api/indoor/*` to Interiora with the full prefix removed
+- `/agora/*` to Agora with `/agora` removed
+- `/plumb/*` to geoplumb with `/plumb` removed
+- `/api/geocode/*` to Geokode with the prefix removed
+- `/api/v1/auth/oidc/*`, remaining `/api/*`, and `/ws/*` to Ptolemy
+- TileTopia auth, portal, assets, terrain, and catalog paths to TileTopia
+- `/jupyter/*` to Jupyter with the path preserved
+- remaining requests to ViewTopia
+
+CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths keep their existing cache policies.
+
+## Validation
+
+Run the local checks without contacting AWS:
 
 ```bash
-# Authenticate Docker with ECR
-aws ecr get-login-password --region us-east-1 \
-  | docker login --username AWS --password-stdin \
-    $(aws sts get-caller-identity --query Account --output text).dkr.ecr.us-east-1.amazonaws.com
-
-# Build and push each service (from workspace root)
-for service in ptolemy tiletopia geokode itinera viewtopia; do
-  docker build -t $(terraform output -json ecr_repositories | jq -r ".${service}"):latest ../${service}/
-  docker push $(terraform output -json ecr_repositories | jq -r ".${service}"):latest
-done
-
-# GeoLang (separate — different directory structure)
-docker build -t $(terraform output -json ecr_repositories | jq -r '.geolang'):latest ../geolang/
-docker push $(terraform output -json ecr_repositories | jq -r '.geolang'):latest
-
-# Force ECS to pull new images
-aws ecs update-service --cluster geolang-prod --service geolang-prod-ptolemy --force-new-deployment
-# (repeat for each service)
+terraform fmt -check -recursive
+terraform init -backend=false
+terraform validate
 ```
 
-### 4. Verify
-
-```bash
-# Check platform health
-curl $(terraform output -raw platform_url)/api/v1/health
-
-# Open the web UI
-open $(terraform output -raw platform_url)
-```
-
-## Deployment Profiles
-
-### Minimal (Dev/Demo) — ~$50-80/month
-
-3 services, no database, no CDN. Good for development and demos.
-
-```bash
-terraform apply -var-file=profiles/minimal.tfvars -var="db_password=unused"
-```
-
-**Includes:** TileTopia, GeoLang, ViewTopia
-
-### Full Platform — ~$150-250/month
-
-All services with RDS PostGIS, CloudFront CDN, and Route53 DNS.
-
-```bash
-terraform apply -var-file=profiles/platform.tfvars -var="db_password=your-password"
-```
-
-**Includes:** PostGIS, Ptolemy, TileTopia, Geokode, Itinera, GeoLang, ViewTopia
-
-## Configuration Reference
-
-### Service Toggles
-
-Each service can be independently enabled/disabled:
-
-```hcl
-enable_ptolemy   = true    # Geodatabase API (requires enable_database)
-enable_tiletopia = true    # 3D Tiles / terrain server
-enable_geokode   = false   # Geocoding service
-enable_itinera   = false   # Routing service
-enable_interiora = false   # Indoor maps + indoor routing
-enable_geoplumb  = false   # Windowed raster tiles over STAC
-enable_geolang   = true    # AI agent
-enable_viewtopia = true    # Web frontend
-enable_database  = true    # RDS PostGIS
-enable_cdn       = true    # CloudFront CDN
-enable_dns       = true    # Route53 + ACM certificate
-```
-
-### Enterprise Feature Toggles
-
-```hcl
-enable_waf       = true    # WAF on ALB (OWASP, rate limiting, geo-blocking)
-enable_cache     = true    # ElastiCache Redis for caching
-enable_efs       = true    # EFS shared persistent storage
-enable_secrets   = true    # Secrets Manager for credentials
-enable_security  = true    # GuardDuty + VPC Flow Logs
-enable_queues    = true    # SQS queues for async processing
-enable_backup    = true    # AWS Backup vault (daily + weekly)
-enable_bastion   = true    # Bastion host with SSM Session Manager
-```
-
-### Fargate Sizing
-
-Default sizing applies to all services. Override per-service for workloads that need more resources:
-
-```hcl
-service_defaults = {
-  cpu           = 256   # 0.25 vCPU
-  memory        = 512   # 0.5 GB
-  desired_count = 1
-}
-
-service_overrides = {
-  geolang = {
-    cpu    = 1024   # 1 vCPU (Python + QGIS + AI inference)
-    memory = 2048   # 2 GB
-  }
-  ptolemy = {
-    cpu    = 512    # 0.5 vCPU (geoprocessing queries)
-    memory = 1024   # 1 GB
-  }
-}
-```
-
-Valid CPU/Memory combinations (AWS Fargate):
-
-| CPU (units) | Memory (MB) | Approx. Monthly Cost |
-|-------------|-------------|---------------------|
-| 256 (0.25 vCPU) | 512–2048 | ~$8–12 |
-| 512 (0.5 vCPU) | 1024–4096 | ~$15–25 |
-| 1024 (1 vCPU) | 2048–8192 | ~$30–50 |
-| 2048 (2 vCPU) | 4096–16384 | ~$60–100 |
-| 4096 (4 vCPU) | 8192–30720 | ~$120–200 |
-
-### Container Images
-
-By default, Terraform creates ECR repositories and expects you to push images. You can also use external registries:
-
-```hcl
-container_images = {
-  ptolemy   = "ghcr.io/geolang/ptolemy:v1.0.0"
-  tiletopia = "ghcr.io/geolang/tiletopia:v1.0.0"
-}
-```
-
-### Custom Domain (geolang.com)
-
-To use your domain:
-
-1. Enable DNS in your tfvars:
-   ```hcl
-   enable_dns  = true
-   domain_name = "geolang.com"
-   ```
-
-2. After `terraform apply`, update your domain registrar's name servers to the values from:
-   ```bash
-   terraform output name_servers
-   ```
-
-3. Wait for DNS propagation (can take up to 48 hours).
-
-4. The ACM certificate will auto-validate via DNS once propagation completes.
-
-## Module Structure
-
-```
-infrastructure/
-├── main.tf                    # Root module — wires everything together
-├── variables.tf               # All input variables
-├── outputs.tf                 # Platform URLs, deploy commands
-├── versions.tf                # Provider version constraints
-├── terraform.tfvars.example   # Example configuration
-├── .gitignore                 # Terraform-specific ignores
-├── profiles/
-│   ├── minimal.tfvars         # Dev/demo: 4 services, ~$50-80/mo
-│   └── platform.tfvars        # Full platform: 8 services, ~$150-250/mo
-├── .github/
-│   └── workflows/
-│       └── terraform.yml      # CI: fmt, validate, and a manual plan
-└── modules/
-    ├── networking/            # VPC, subnets, NAT, route tables
-    │   └── main.tf
-    ├── database/              # RDS PostGIS 16, security group
-    │   └── main.tf
-    ├── ecr/                   # Container registries (1 per service)
-    │   └── main.tf
-    ├── ecs/                   # Fargate cluster, tasks, service discovery
-    │   └── main.tf
-    ├── loadbalancer/          # ALB, path-based routing, security groups
-    │   └── main.tf
-    ├── cdn/                   # CloudFront with tile-optimized caching
-    │   └── main.tf
-    ├── dns/                   # Route53 zone, ACM certificate
-    │   └── main.tf
-    ├── monitoring/            # CloudWatch dashboards, alarms, SNS
-    │   └── main.tf
-    ├── autoscaling/           # ECS target tracking (CPU/memory)
-    │   └── main.tf
-    └── bastion/               # EC2 bastion with SSM Session Manager
-        └── main.tf
-```
-
-### Module Descriptions
-
-| Module | Purpose | Key Resources |
-|--------|---------|---------------|
-| **networking** | Network foundation | VPC, 2+ public subnets, 2+ private subnets, IGW, NAT Gateway |
-| **database** | PostGIS database | RDS PostgreSQL 16, DB subnet group, security group |
-| **ecr** | Container registries | 1 ECR repo per service, lifecycle policies, scan-on-push |
-| **ecs** | Compute layer | Fargate cluster, task definitions, ECS services, Cloud Map service discovery |
-| **loadbalancer** | Traffic routing | ALB, target groups, path-based listener rules, ALB + ECS security groups |
-| **cdn** | Edge caching | CloudFront distribution with tile-optimized cache behaviors |
-| **dns** | Domain management | Route53 hosted zone, ACM certificate with DNS validation |
-| **monitoring** | Observability | CloudWatch dashboard, CPU/memory/5xx alarms, SNS alert topic |
-| **autoscaling** | Auto scaling | ECS target tracking policies for CPU and memory utilization |
-| **bastion** | Secure access | EC2 bastion host with SSM Session Manager, DB port forwarding |
-| **waf** | Web firewall | WAF v2 with OWASP rules, rate limiting, geo-blocking, logging |
-| **cache** | Caching | ElastiCache Redis for geocoding, routing, tile metadata cache |
-| **storage** | Shared storage | EFS with per-service access points (TileTopia, GeoLang) |
-| **secrets** | Credentials | Secrets Manager for DB creds and API keys |
-| **security** | Threat detection | GuardDuty, VPC Flow Logs, ECS Exec IAM policy |
-| **queues** | Async processing | SQS queues with DLQs for tiles, geocoding, AI, ETL |
-| **backup** | Disaster recovery | AWS Backup vault with daily/weekly schedules, cross-region copy |
-
-## Networking
-
-The VPC uses a standard public/private subnet architecture:
-
-- **Public subnets** — ALB, NAT Gateway
-- **Private subnets** — ECS Fargate tasks, RDS database
-- **NAT Gateway** — Single NAT for outbound internet (ECR pulls, external APIs)
-- **Security Groups** — ALB allows 80/443 inbound; ECS allows traffic from ALB only; RDS allows 5432 from ECS only
-
-### Inter-Service Communication
-
-Services communicate via [AWS Cloud Map](https://docs.aws.amazon.com/cloud-map/latest/dg/what-is-cloud-map.html) service discovery:
-
-```
-ptolemy.geolang-prod.local:3000
-tiletopia.geolang-prod.local:3000
-geokode.geolang-prod.local:3000
-itinera.geolang-prod.local:3000
-geolang.geolang-prod.local:8080
-```
-
-GeoLang (the AI agent) uses these DNS names to call other services internally, matching the Docker Compose service discovery pattern.
-
-## Monitoring & Alerts
-
-### CloudWatch Dashboard
-
-After deployment, access the dashboard at the URL from:
-
-```bash
-terraform output dashboard_url
-```
-
-The dashboard shows CPU/memory utilization for each service and ALB request metrics.
-
-### Alarms
-
-Alarms are pre-configured for:
-
-- **ECS CPU > 80%** (per service, 3 consecutive periods)
-- **ECS Memory > 85%** (per service, 3 consecutive periods)
-- **ALB 5xx > 10** (2 consecutive periods)
-- **RDS CPU > 80%** (when database is enabled)
-- **RDS Storage < 2 GB** (when database is enabled)
-
-Subscribe to alerts:
-
-```bash
-aws sns subscribe \
-  --topic-arn $(terraform output -raw alerts_topic_arn) \
-  --protocol email \
-  --notification-endpoint your@email.com
-```
-
-## Cost Breakdown
-
-### Minimal Profile (~$50-80/month)
-
-| Resource | Monthly Cost |
-|----------|-------------|
-| ECS Fargate (4 tasks × 0.25 vCPU) | ~$30 |
-| NAT Gateway + data | ~$35 |
-| ALB | ~$16 |
-| S3 (small usage) | ~$1 |
-| CloudWatch Logs | ~$1 |
-| **Total** | **~$80** |
-
-### Platform Profile (~$150-250/month)
-
-| Resource | Monthly Cost |
-|----------|-------------|
-| ECS Fargate (8 tasks, mixed sizing) | ~$80 |
-| RDS db.t4g.micro | ~$12 |
-| NAT Gateway + data | ~$35 |
-| ALB | ~$16 |
-| CloudFront (light usage) | ~$5 |
-| ElastiCache (cache.t4g.micro) | ~$12 |
-| EFS (elastic, light usage) | ~$3 |
-| WAF (managed rules) | ~$10 |
-| S3 | ~$2 |
-| Route53 | ~$1 |
-| CloudWatch + GuardDuty | ~$5 |
-| Bastion (t4g.nano) | ~$3 |
-| **Total** | **~$185** |
-
-> **Cost-saving tip:** For dev environments, you can stop ECS services after hours by setting `desired_count = 0` and restarting them when needed.
-
-## Operations
-
-### Scaling a Service
-
-```bash
-# Scale up Ptolemy to 3 instances
-aws ecs update-service --cluster geolang-prod \
-  --service geolang-prod-ptolemy \
-  --desired-count 3
-
-# Or update Terraform:
-# service_overrides = { ptolemy = { desired_count = 3 } }
-# terraform apply
-```
-
-### Viewing Logs
-
-```bash
-# Tail logs for a specific service
-aws logs tail /ecs/geolang-prod/ptolemy --follow
-
-# Search logs
-aws logs filter-log-events \
-  --log-group-name /ecs/geolang-prod/geolang \
-  --filter-pattern "ERROR"
-```
-
-### Updating a Service
-
-```bash
-# Rebuild and push new image
-docker build -t <ecr-url>:latest ../ptolemy/
-docker push <ecr-url>:latest
-
-# Force new deployment
-aws ecs update-service --cluster geolang-prod \
-  --service geolang-prod-ptolemy \
-  --force-new-deployment
-
-# Watch deployment progress
-aws ecs wait services-stable --cluster geolang-prod \
-  --services geolang-prod-ptolemy
-```
-
-### Database Access
-
-The RDS instance is in private subnets with no public access. Connect via the bastion host:
-
-```bash
-# Enable bastion in your tfvars:
-# enable_bastion = true
-
-# Connect to bastion via SSM (no SSH keys needed):
-terraform output -raw bastion_ssm_command
-# → aws ssm start-session --target i-0abc123def456
-
-# Port-forward to RDS for local psql access:
-terraform output -raw bastion_db_tunnel_command
-# → aws ssm start-session --target i-0abc123def456 \
-#     --document-name AWS-StartPortForwardingSessionToRemoteHost \
-#     --parameters '{"portNumber":["5432"],"localPortNumber":["5432"]}'
-
-# Then in another terminal:
-psql -h localhost -U ptolemy -d ptolemy
-```
-
-## Autoscaling
-
-The platform profile enables autoscaling by default. Services scale based on CPU and memory utilization:
-
-```hcl
-enable_autoscaling = true
-
-autoscaling_config = {
-  ptolemy = {
-    min_capacity  = 1
-    max_capacity  = 3
-    cpu_target    = 70    # Scale out when CPU > 70%
-    memory_target = 75    # Scale out when memory > 75%
-  }
-  tiletopia = {
-    min_capacity  = 1
-    max_capacity  = 4
-    cpu_target    = 65
-    memory_target = 70
-  }
-}
-```
-
-**How it works:**
-
-- **Scale out** — When average CPU or memory exceeds the target for 60 seconds, a new task is added (up to `max_capacity`).
-- **Scale in** — When metrics drop below target for 5 minutes, tasks are removed (down to `min_capacity`).
-- Each service scales independently based on its own utilization.
-
-## CI (GitHub Actions)
-
-`.github/workflows/terraform.yml` checks this repo. It does not deploy.
-
-| Trigger | Action |
-|---------|--------|
-| Push or PR to `master` | `terraform fmt -check`, `init -backend=false`, `validate`. No AWS credentials needed. |
-| Manual dispatch | The above, then `terraform plan` against a chosen profile. |
-
-Applying is a local operation, run deliberately by an operator (see Quick Start). CI cannot apply, because `versions.tf` keeps the S3 backend commented out: with no remote state, a CI apply would create real resources and then discard the state file that tracks them.
-
-Service images are built and pushed from each service's own repo. This repo holds only terraform.
-
-### Required GitHub Secrets
-
-Only needed for the manual plan. The check job needs none.
-
-| Secret | Description |
-|--------|-------------|
-| `AWS_ACCESS_KEY_ID` | IAM user with Terraform permissions |
-| `AWS_SECRET_ACCESS_KEY` | IAM user secret key |
-| `AWS_REGION` | AWS region, defaults to `us-east-1` |
-| `TF_VAR_db_password` | RDS database password |
-
-### Teardown
-
-```bash
-# Destroy all resources
-terraform destroy
-
-# Or destroy a specific profile
-terraform destroy -var-file=profiles/minimal.tfvars
-```
-
-## Remote State (Recommended for Teams)
-
-For team usage, configure S3 backend for state management:
-
-1. Create a state bucket and DynamoDB lock table:
-   ```bash
-   aws s3 mb s3://geolang-terraform-state --region us-east-1
-   aws dynamodb create-table \
-     --table-name geolang-terraform-locks \
-     --attribute-definitions AttributeName=LockID,AttributeType=S \
-     --key-schema AttributeName=LockID,KeyType=HASH \
-     --billing-mode PAY_PER_REQUEST
-   ```
-
-2. Uncomment the `backend "s3"` block in `versions.tf`.
-
-3. Run `terraform init -migrate-state` to migrate existing state.
-
-## Security Notes
-
-- **WAF** — OWASP core rules, SQL injection protection, known bad inputs, rate limiting, geo-blocking
-- **RDS** — Private subnets only, encrypted at rest, no public access
-- **ECS** — Private subnets, outbound via NAT Gateway
-- **S3** — Public access blocked, server-side encryption (AES-256)
-- **EFS** — Encrypted at rest, per-service access points for isolation
-- **ALB** — TLS 1.3 when ACM certificate is attached
-- **IAM** — Least-privilege roles; ECS tasks only access their own S3 bucket
-- **Bastion** — SSM Session Manager (no SSH keys); IMDSv2 enforced; encrypted EBS
-- **GuardDuty** — Threat detection with S3 monitoring and malware protection
-- **VPC Flow Logs** — Full network audit trail (90-day retention)
-- **Secrets Manager** — Centralized credential storage with rotation support
-- **Backup** — Daily + weekly automated backups with optional cross-region DR
-- **Secrets** — `terraform.tfvars` is gitignored; use Secrets Manager in production/CI
-
-## License
-
-AGPL-3.0-or-later, see [LICENSE](LICENSE).
-
-Copyright (C) 2026 Grok Image Compression Inc.
+The GitHub workflow runs the same format and validation checks. Its manual plan job needs AWS credentials because `terraform plan` reads account and region data sources. No runtime application credential is passed to Terraform.
+
+## Important outputs
+
+- `platform_url`
+- `ecr_repositories`
+- `database_endpoint`
+- `database_master_user_secret_arn`
+- `agora_database_endpoint`
+- `agora_database_master_user_secret_arn`
+- `runtime_secret_arns`
+- `efs_access_points`
+- `service_discovery_namespace`
+
+## Safe apply blockers
+
+The infrastructure can be planned before these are resolved, with all services held at zero:
+
+- The GeoLang image must be changed or supplied so it contains the application source.
+- Every enabled ECR image must be pushed.
+- EFS spatial and coverage data must be staged.
+- All required secret containers must have a current value.
+- DNS delegation and ACM validation must complete when the platform profile uses `geolang.com`.
+
+Review the second plan after setting `runtime_secrets_ready = true`. It is the point where ECS begins running the platform.

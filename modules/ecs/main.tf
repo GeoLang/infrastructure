@@ -1,4 +1,4 @@
-# GeoLang Infrastructure — ECS Module
+# GeoLang Infrastructure - ECS Module
 #
 # ECS Fargate cluster with service discovery (Cloud Map) and
 # individual task definitions for each GeoLang service.
@@ -23,6 +23,11 @@ variable "ecs_security_group_id" {
   type = string
 }
 
+variable "untrusted_code_security_group_id" {
+  description = "Security group for services that run user-supplied code"
+  type        = string
+}
+
 variable "enable_container_insights" {
   type    = bool
   default = true
@@ -39,15 +44,31 @@ variable "tags" {
 variable "services" {
   description = "Map of service definitions to deploy"
   type = map(object({
-    image          = string
-    cpu            = number
-    memory         = number
-    desired_count  = number
-    container_port = number
-    health_path    = string
-    environment    = list(object({ name = string, value = string }))
-    secrets        = optional(list(object({ name = string, valueFrom = string })), [])
-    command        = optional(list(string), [])
+    image                    = string
+    cpu                      = number
+    memory                   = number
+    desired_count            = number
+    container_port           = number
+    health_path              = string
+    health_command           = optional(list(string), [])
+    environment              = list(object({ name = string, value = string }))
+    secrets                  = optional(list(object({ name = string, valueFrom = string })), [])
+    command                  = optional(list(string), [])
+    public                   = optional(bool, false)
+    user                     = optional(string)
+    working_directory        = optional(string)
+    readonly_root_filesystem = optional(bool, false)
+    dropped_capabilities     = optional(list(string), [])
+    runs_untrusted_code      = optional(bool, false)
+    mount_points = optional(list(object({
+      source_volume  = string
+      container_path = string
+      read_only      = optional(bool, false)
+    })), [])
+    efs_volumes = optional(map(object({
+      file_system_id  = string
+      access_point_id = string
+    })), {})
   }))
 }
 
@@ -68,9 +89,9 @@ variable "alb_listener_https_arn" {
   default     = ""
 }
 
-variable "vpc_cidr" {
-  description = "VPC CIDR for ALB target group"
-  type        = string
+locals {
+  public_services = { for name, service in var.services : name => service if service.public }
+  secret_arns     = distinct(flatten([for service in values(var.services) : [for secret in service.secrets : secret.valueFrom]]))
 }
 
 # ─── ECS Cluster ──────────────────────────────────────────────────────────────
@@ -143,7 +164,9 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
 }
 
 # Allow pulling secrets from SSM Parameter Store
-resource "aws_iam_role_policy" "ecs_execution_ssm" {
+resource "aws_iam_role_policy" "ecs_execution_secrets" {
+  count = length(local.secret_arns) > 0 ? 1 : 0
+
   name = "${var.name_prefix}-ssm-read"
   role = aws_iam_role.ecs_execution.id
 
@@ -156,13 +179,31 @@ resource "aws_iam_role_policy" "ecs_execution_ssm" {
         "ssm:GetParameter",
         "secretsmanager:GetSecretValue",
       ]
-      Resource = ["*"]
+      Resource = local.secret_arns
     }]
   })
 }
 
 resource "aws_iam_role" "ecs_task" {
   name = "${var.name_prefix}-ecs-task"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "ecs-tasks.amazonaws.com" }
+    }]
+  })
+
+  tags = var.tags
+}
+
+# Services running user-supplied code get their own role: any code they run can
+# read the role's credentials from the task metadata endpoint, so it holds no
+# policies at all.
+resource "aws_iam_role" "ecs_task_untrusted_code" {
+  name = "${var.name_prefix}-ecs-task-untrusted-code"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -218,7 +259,24 @@ resource "aws_ecs_task_definition" "services" {
   cpu                      = each.value.cpu
   memory                   = each.value.memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
-  task_role_arn            = aws_iam_role.ecs_task.arn
+  task_role_arn            = each.value.runs_untrusted_code ? aws_iam_role.ecs_task_untrusted_code.arn : aws_iam_role.ecs_task.arn
+
+  dynamic "volume" {
+    for_each = each.value.efs_volumes
+    content {
+      name = volume.key
+
+      efs_volume_configuration {
+        file_system_id     = volume.value.file_system_id
+        transit_encryption = "ENABLED"
+
+        authorization_config {
+          access_point_id = volume.value.access_point_id
+          iam             = "DISABLED"
+        }
+      }
+    }
+  }
 
   container_definitions = jsonencode([{
     name  = each.key
@@ -227,9 +285,22 @@ resource "aws_ecs_task_definition" "services" {
       containerPort = each.value.container_port
       protocol      = "tcp"
     }]
-    environment = each.value.environment
-    secrets     = each.value.secrets
-    command     = length(each.value.command) > 0 ? each.value.command : null
+    environment            = each.value.environment
+    secrets                = each.value.secrets
+    command                = length(each.value.command) > 0 ? each.value.command : null
+    user                   = each.value.user
+    workingDirectory       = each.value.working_directory
+    readonlyRootFilesystem = each.value.readonly_root_filesystem
+    mountPoints = [for mount in each.value.mount_points : {
+      sourceVolume  = mount.source_volume
+      containerPath = mount.container_path
+      readOnly      = mount.read_only
+    }]
+    linuxParameters = length(each.value.dropped_capabilities) > 0 ? {
+      capabilities = {
+        drop = each.value.dropped_capabilities
+      }
+    } : null
 
     logConfiguration = {
       logDriver = "awslogs"
@@ -241,7 +312,7 @@ resource "aws_ecs_task_definition" "services" {
     }
 
     healthCheck = {
-      command     = ["CMD-SHELL", "curl -f http://localhost:${each.value.container_port}${each.value.health_path} || exit 1"]
+      command     = length(each.value.health_command) > 0 ? each.value.health_command : ["CMD-SHELL", "curl -f http://localhost:${each.value.container_port}${each.value.health_path} || exit 1"]
       interval    = 30
       timeout     = 5
       retries     = 3
@@ -255,7 +326,7 @@ resource "aws_ecs_task_definition" "services" {
 # ─── ALB Target Groups ───────────────────────────────────────────────────────
 
 resource "aws_lb_target_group" "services" {
-  for_each = var.services
+  for_each = local.public_services
 
   name        = "${var.name_prefix}-${each.key}"
   port        = each.value.container_port
@@ -277,149 +348,31 @@ resource "aws_lb_target_group" "services" {
 
   lifecycle {
     create_before_destroy = true
+
+    precondition {
+      condition     = length(local.public_services) <= 1
+      error_message = "At most one ECS service can be public because the ALB has one catch-all route."
+    }
   }
 }
 
-# ─── ALB Listener Rules (path-based routing) ─────────────────────────────────
-#
-# Source of truth for this routing is viewtopia/deploy/nginx-platform.conf. When
-# a location changes there, change the matching rule here.
-#
-#   /agent/*              → geolang:8080
-#   /tiles/*              → tiletopia:3000
-#   /api/v1/realtime/*    → tiletopia:3000  (collab websocket)
-#   /api/v1/auth/oidc/*   → ptolemy:3000    (see below)
-#   /api/v1/auth/*        → tiletopia:3000
-#   /api/v1/portal/*      → tiletopia:3000
-#   /api/v1/assets*       → tiletopia:3000  (3D tiles)
-#   /api/v1/terrain/*     → tiletopia:3000  (quantized-mesh terrain)
-#   /api/geocode/*        → geokode:3000
-#   /api/route*           → itinera:3000
-#   /api/isochrone*       → itinera:3000
-#   /api/delivery/*       → itinera:3000
-#   /api/indoor/*         → interiora:3000
-#   /plumb/*              → geoplumb:3000   (not under /api, so ahead of /*)
-#
-# geoplumb serves /layers and /tiles/*, and nginx strips the /plumb prefix on
-# the way through. An ALB rule cannot rewrite, so the prefix arrives intact
-# here and the image needs a path prefix of its own to answer it. The same
-# already holds for /api/indoor, /api/geocode, /api/route and /tiles.
-#   /api/*, /ws/*         → ptolemy:3000    (catch-all for API)
-#   /*                    → viewtopia:5174  (frontend default)
-#
-# ptolemy and tiletopia both serve /api/v1, so the carve-outs above are the only
-# thing keeping them apart. Two of them overlap and the priorities matter:
-# ptolemy owns /api/v1/auth/oidc/* (ptolemy-api/src/oidc.rs:57-59, nested at
-# /api/v1) while tiletopia owns the rest of /api/v1/auth/*, so the oidc rule has
-# to win or ptolemy's OIDC login and callback land on tiletopia. nginx has no
-# equivalent carve-out and misroutes them today.
-#
-# The asset and terrain carve-out is what the CDN's tile cache behaviors depend
-# on: without it the tileset, tile and terrain reads land on ptolemy's catch-all
-# and 404. nginx reaches them through its /tiles/ location, which rewrites the
-# prefix to /api/, and an ALB rule cannot rewrite.
-
-locals {
-  # Priority-ordered routing rules. Lower priority number = evaluated first.
-  routing_rules = {
-    geolang = {
-      priority = 100
-      paths    = ["/agent/*", "/agent"]
-      service  = "geolang"
-    }
-    tiletopia = {
-      priority = 200
-      paths    = ["/tiles/*", "/tiles"]
-      service  = "tiletopia"
-    }
-    tiletopia_realtime = {
-      priority = 150
-      paths    = ["/api/v1/realtime/*"]
-      service  = "tiletopia"
-    }
-    ptolemy_oidc = {
-      priority = 155
-      paths    = ["/api/v1/auth/oidc/*"]
-      service  = "ptolemy"
-    }
-    tiletopia_auth = {
-      priority = 160
-      paths    = ["/api/v1/auth/*"]
-      service  = "tiletopia"
-    }
-    tiletopia_portal = {
-      priority = 170
-      paths    = ["/api/v1/portal/*"]
-      service  = "tiletopia"
-    }
-    tiletopia_tiles = {
-      priority = 180
-      paths    = ["/api/v1/assets", "/api/v1/assets/*", "/api/v1/terrain/*", "/api/v1/catalog", "/api/v1/catalog/*"]
-      service  = "tiletopia"
-    }
-    geokode = {
-      priority = 300
-      paths    = ["/api/geocode/*", "/api/geocode"]
-      service  = "geokode"
-    }
-    itinera_route = {
-      priority = 400
-      paths    = ["/api/route", "/api/route/*"]
-      service  = "itinera"
-    }
-    itinera_isochrone = {
-      priority = 410
-      paths    = ["/api/isochrone", "/api/isochrone/*"]
-      service  = "itinera"
-    }
-    itinera_delivery = {
-      priority = 420
-      paths    = ["/api/delivery/*", "/api/delivery"]
-      service  = "itinera"
-    }
-    interiora = {
-      priority = 430
-      paths    = ["/api/indoor/*", "/api/indoor"]
-      service  = "interiora"
-    }
-    geoplumb = {
-      priority = 440
-      paths    = ["/plumb/*", "/plumb"]
-      service  = "geoplumb"
-    }
-    ptolemy = {
-      priority = 500
-      paths    = ["/api/*", "/api", "/ws/*"]
-      service  = "ptolemy"
-    }
-    viewtopia = {
-      priority = 900
-      paths    = ["/*"]
-      service  = "viewtopia"
-    }
-  }
-
-  # Only create rules for enabled services
-  active_rules = {
-    for k, v in local.routing_rules : k => v
-    if contains(keys(var.services), v.service)
-  }
-}
+# The edge proxy is the only public target. It applies the platform's prefix
+# rewrites before using Cloud Map to reach private services.
 
 resource "aws_lb_listener_rule" "http" {
-  for_each = local.active_rules
+  for_each = var.alb_listener_https_arn == "" ? local.public_services : {}
 
   listener_arn = var.alb_listener_arn
-  priority     = each.value.priority
+  priority     = 100
 
   action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.services[each.value.service].arn
+    target_group_arn = aws_lb_target_group.services[each.key].arn
   }
 
   condition {
     path_pattern {
-      values = each.value.paths
+      values = ["/*"]
     }
   }
 
@@ -427,19 +380,19 @@ resource "aws_lb_listener_rule" "http" {
 }
 
 resource "aws_lb_listener_rule" "https" {
-  for_each = var.alb_listener_https_arn != "" ? local.active_rules : {}
+  for_each = var.alb_listener_https_arn != "" ? local.public_services : {}
 
   listener_arn = var.alb_listener_https_arn
-  priority     = each.value.priority
+  priority     = 100
 
   action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.services[each.value.service].arn
+    target_group_arn = aws_lb_target_group.services[each.key].arn
   }
 
   condition {
     path_pattern {
-      values = each.value.paths
+      values = ["/*"]
     }
   }
 
@@ -459,14 +412,17 @@ resource "aws_ecs_service" "services" {
 
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups  = [var.ecs_security_group_id]
+    security_groups  = [each.value.runs_untrusted_code ? var.untrusted_code_security_group_id : var.ecs_security_group_id]
     assign_public_ip = false
   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.services[each.key].arn
-    container_name   = each.key
-    container_port   = each.value.container_port
+  dynamic "load_balancer" {
+    for_each = each.value.public ? [1] : []
+    content {
+      target_group_arn = aws_lb_target_group.services[each.key].arn
+      container_name   = each.key
+      container_port   = each.value.container_port
+    }
   }
 
   service_registries {
@@ -475,6 +431,7 @@ resource "aws_ecs_service" "services" {
 
   depends_on = [
     aws_lb_listener_rule.http,
+    aws_lb_listener_rule.https,
   ]
 
   tags = merge(var.tags, { Service = each.key })

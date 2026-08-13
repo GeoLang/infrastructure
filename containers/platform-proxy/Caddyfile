@@ -1,0 +1,91 @@
+:8080 {
+	route {
+		handle /health {
+			respond "ok" 200
+		}
+
+		# handle_path and the /api/* style handles below only match the slashed
+		# form, so send the bare prefix down the same route
+		@bare_prefix path /agent /tiles /ogc /agora /plumb /jupyter /api /ws /api/geocode /api/indoor /api/delivery
+		rewrite @bare_prefix {path}/
+
+		handle_path /agent/* {
+			reverse_proxy geolang-api.{$SERVICE_DISCOVERY_NAMESPACE}:8080
+		}
+
+		handle /api/v1/realtime/* {
+			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle_path /tiles/* {
+			rewrite * /api{path}
+			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle_path /ogc/* {
+			reverse_proxy fenestra.{$SERVICE_DISCOVERY_NAMESPACE}:8080
+		}
+
+		handle_path /api/delivery/* {
+			rewrite * /delivery{path}
+			reverse_proxy itinera.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		@itinera path /api/route /api/route/* /api/isochrone /api/isochrone/* /api/network/*
+		handle @itinera {
+			uri strip_prefix /api
+			reverse_proxy itinera.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		@pipelineRuns path /api/pipeline/runs /api/pipeline/runs/*
+		handle @pipelineRuns {
+			uri strip_prefix /api/pipeline
+			reverse_proxy geodukt.{$SERVICE_DISCOVERY_NAMESPACE}:8100
+		}
+
+		handle_path /api/indoor/* {
+			reverse_proxy interiora.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle_path /agora/* {
+			reverse_proxy agora.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle_path /plumb/* {
+			reverse_proxy geoplumb.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle_path /api/geocode/* {
+			reverse_proxy geokode.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle /api/v1/auth/oidc/* {
+			reverse_proxy ptolemy.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		@tiletopia path /api/v1/auth/* /api/v1/portal/* /api/v1/assets /api/v1/assets/* /api/v1/terrain/* /api/v1/catalog /api/v1/catalog/*
+		handle @tiletopia {
+			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle /api/* {
+			reverse_proxy ptolemy.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle /ws/* {
+			reverse_proxy ptolemy.{$SERVICE_DISCOVERY_NAMESPACE}:3000
+		}
+
+		handle /jupyter/* {
+			reverse_proxy jupyter.{$SERVICE_DISCOVERY_NAMESPACE}:8888
+		}
+
+		handle /metrics {
+			respond 404
+		}
+
+		handle {
+			reverse_proxy viewtopia.{$SERVICE_DISCOVERY_NAMESPACE}:5174
+		}
+	}
+}

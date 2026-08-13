@@ -1,4 +1,4 @@
-# GeoLang Infrastructure — AWS Backup Module
+# GeoLang Infrastructure - AWS Backup Module
 #
 # Automated backup vault with lifecycle policies for RDS snapshots
 # and optional cross-region copy for disaster recovery.
@@ -7,9 +7,9 @@ variable "name_prefix" {
   type = string
 }
 
-variable "rds_arn" {
-  description = "RDS instance ARN to back up"
-  type        = string
+variable "rds_arns" {
+  description = "RDS instance ARNs to back up"
+  type        = list(string)
 }
 
 variable "efs_arn" {
@@ -129,10 +129,7 @@ resource "aws_backup_selection" "rds" {
   plan_id      = aws_backup_plan.main.id
   iam_role_arn = aws_iam_role.backup.arn
 
-  resources = compact([
-    var.rds_arn,
-    var.efs_arn,
-  ])
+  resources = concat(var.rds_arns, compact([var.efs_arn]))
 }
 
 # ─── Vault Lock (optional, for compliance) ────────────────────────────────────

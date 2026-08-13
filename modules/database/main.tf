@@ -1,4 +1,4 @@
-# GeoLang Infrastructure — Database Module (RDS PostGIS)
+# GeoLang Infrastructure - Database Module (RDS PostGIS)
 #
 # Provisions an RDS PostgreSQL instance with PostGIS extensions.
 # Uses private subnets with no public access.
@@ -38,11 +38,6 @@ variable "db_name" {
 variable "db_username" {
   type    = string
   default = "ptolemy"
-}
-
-variable "db_password" {
-  type      = string
-  sensitive = true
 }
 
 variable "multi_az" {
@@ -125,9 +120,9 @@ resource "aws_db_instance" "main" {
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  db_name  = var.db_name
-  username = var.db_username
-  password = var.db_password
+  db_name                     = var.db_name
+  username                    = var.db_username
+  manage_master_user_password = true
 
   multi_az               = var.multi_az
   db_subnet_group_name   = aws_db_subnet_group.main.name
@@ -158,7 +153,7 @@ resource "aws_db_parameter_group" "postgis" {
 
   parameter {
     name  = "rds.force_ssl"
-    value = "0" # Disable for internal VPC traffic; enable in production
+    value = "0" # Disable for internal VPC traffic, enable in production
   }
 
   tags = var.tags
@@ -173,6 +168,11 @@ resource "aws_db_parameter_group" "postgis" {
 output "endpoint" {
   description = "RDS endpoint"
   value       = aws_db_instance.main.endpoint
+}
+
+output "identifier" {
+  description = "RDS instance identifier"
+  value       = aws_db_instance.main.identifier
 }
 
 output "arn" {
@@ -190,10 +190,9 @@ output "port" {
   value       = aws_db_instance.main.port
 }
 
-output "database_url" {
-  description = "Full PostgreSQL connection string"
-  value       = "postgres://${var.db_username}:${var.db_password}@${aws_db_instance.main.endpoint}/${var.db_name}"
-  sensitive   = true
+output "master_user_secret_arn" {
+  description = "RDS-managed master credential secret ARN"
+  value       = aws_db_instance.main.master_user_secret[0].secret_arn
 }
 
 output "security_group_id" {

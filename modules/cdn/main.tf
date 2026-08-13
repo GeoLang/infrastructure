@@ -1,4 +1,4 @@
-# GeoLang Infrastructure — CDN Module (CloudFront)
+# GeoLang Infrastructure - CDN Module (CloudFront)
 #
 # CloudFront distribution in front of the ALB with cache behaviors
 # optimized for geospatial tile delivery.
@@ -69,7 +69,7 @@ resource "aws_cloudfront_distribution" "main" {
     }
   }
 
-  # Default behavior — pass through to ALB (API, frontend)
+  # Default behavior, pass through to ALB (API, frontend)
   default_cache_behavior {
     allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
     cached_methods         = ["GET", "HEAD"]
@@ -157,7 +157,63 @@ resource "aws_cloudfront_distribution" "main" {
     max_ttl     = 0
   }
 
-  # 3D Tiles — cache aggressively (immutable content-addressed tiles).
+  # Agora uses a WebSocket under /agora/ws. Its bearer token can arrive in the
+  # WebSocket subprotocol, so the handshake headers must reach the proxy.
+  ordered_cache_behavior {
+    path_pattern           = "/agora/*"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "alb"
+    viewer_protocol_policy = "https-only"
+
+    forwarded_values {
+      query_string = true
+      headers = [
+        "Sec-WebSocket-Protocol",
+        "Sec-WebSocket-Key",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Extensions",
+        "Authorization",
+        "Origin",
+        "Host",
+      ]
+      cookies { forward = "all" }
+    }
+
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+  }
+
+  # Jupyter kernel channels use WebSockets and its HTTP API uses a token and
+  # cookies. Forward both kinds of request without caching.
+  ordered_cache_behavior {
+    path_pattern           = "/jupyter/*"
+    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods         = ["GET", "HEAD"]
+    target_origin_id       = "alb"
+    viewer_protocol_policy = "https-only"
+
+    forwarded_values {
+      query_string = true
+      headers = [
+        "Sec-WebSocket-Protocol",
+        "Sec-WebSocket-Key",
+        "Sec-WebSocket-Version",
+        "Sec-WebSocket-Extensions",
+        "Authorization",
+        "Origin",
+        "Host",
+      ]
+      cookies { forward = "all" }
+    }
+
+    min_ttl     = 0
+    default_ttl = 0
+    max_ttl     = 0
+  }
+
+  # 3D Tiles, cache aggressively (immutable content-addressed tiles).
   # No credential is forwarded here or on terrain below on purpose: both map to
   # reads tiletopia serves anonymously (is_public_read in its auth.rs), so the
   # response is identical for every caller. If tile reads ever become per-user,
@@ -203,7 +259,7 @@ resource "aws_cloudfront_distribution" "main" {
     compress    = true
   }
 
-  # Terrain tiles — cache aggressively
+  # Terrain tiles, cache aggressively
   ordered_cache_behavior {
     path_pattern           = "/api/v1/terrain/*"
     allowed_methods        = ["GET", "HEAD"]
@@ -222,7 +278,7 @@ resource "aws_cloudfront_distribution" "main" {
     compress    = true
   }
 
-  # Static frontend assets — cache with revalidation
+  # Static frontend assets, cache with revalidation
   ordered_cache_behavior {
     path_pattern           = "/assets/*"
     allowed_methods        = ["GET", "HEAD"]

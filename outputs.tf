@@ -1,6 +1,6 @@
-# GeoLang Infrastructure — Outputs
+# GeoLang Infrastructure - Outputs
 #
-# All endpoints, URLs, and deployment commands for the platform.
+# Platform endpoints and resource identifiers.
 
 # ─── Access URLs ──────────────────────────────────────────────────────────────
 
@@ -35,8 +35,23 @@ output "ecr_repositories" {
 # ─── Database ────────────────────────────────────────────────────────────────
 
 output "database_endpoint" {
-  description = "RDS PostgreSQL endpoint"
+  description = "Ptolemy RDS PostgreSQL endpoint"
   value       = var.enable_database ? module.database[0].endpoint : "Database disabled"
+}
+
+output "database_master_user_secret_arn" {
+  description = "Ptolemy RDS managed master credential secret ARN"
+  value       = var.enable_database ? module.database[0].master_user_secret_arn : "Database disabled"
+}
+
+output "agora_database_endpoint" {
+  description = "Agora RDS PostgreSQL endpoint"
+  value       = var.enable_database && var.enable_agora ? module.agora_database[0].endpoint : "Agora database disabled"
+}
+
+output "agora_database_master_user_secret_arn" {
+  description = "Agora RDS managed master credential secret ARN"
+  value       = var.enable_database && var.enable_agora ? module.agora_database[0].master_user_secret_arn : "Agora database disabled"
 }
 
 # ─── DNS ──────────────────────────────────────────────────────────────────────
@@ -54,7 +69,7 @@ output "dashboard_url" {
 }
 
 output "alerts_topic_arn" {
-  description = "SNS topic ARN — subscribe your email for alerts"
+  description = "SNS topic ARN, subscribe your email for alerts"
   value       = module.monitoring.sns_topic_arn
 }
 
@@ -93,7 +108,7 @@ output "bastion_db_tunnel_command" {
 
 output "autoscaling_enabled" {
   description = "Whether autoscaling is enabled"
-  value       = var.enable_autoscaling
+  value       = var.enable_autoscaling && var.runtime_secrets_ready
 }
 
 # ─── WAF ──────────────────────────────────────────────────────────────────────
@@ -115,6 +130,16 @@ output "redis_endpoint" {
 output "efs_file_system_id" {
   description = "EFS file system ID"
   value       = var.enable_efs ? module.storage[0].file_system_id : "EFS disabled"
+}
+
+output "efs_access_points" {
+  description = "EFS access point IDs by workload"
+  value       = var.enable_efs ? module.storage[0].access_points : {}
+}
+
+output "runtime_secret_arns" {
+  description = "Runtime secret ARNs by purpose"
+  value       = local.runtime_secret_arns
 }
 
 # ─── Security ────────────────────────────────────────────────────────────────
@@ -141,41 +166,4 @@ output "sqs_queue_urls" {
 output "backup_vault_name" {
   description = "AWS Backup vault name"
   value       = var.enable_backup && var.enable_database ? module.backup[0].vault_name : "Backup disabled"
-}
-
-# ─── Deployment Commands ─────────────────────────────────────────────────────
-
-output "deploy_commands" {
-  description = "Step-by-step commands to build and deploy all services"
-  value       = <<-EOT
-
-    ╔══════════════════════════════════════════════════════════════╗
-    ║          GeoLang Platform — Deployment Commands             ║
-    ╚══════════════════════════════════════════════════════════════╝
-
-    # 1. Authenticate with ECR:
-    aws ecr get-login-password --region ${var.aws_region} \
-      | docker login --username AWS --password-stdin \
-        $(aws sts get-caller-identity --query Account --output text).dkr.ecr.${var.aws_region}.amazonaws.com
-
-    # 2. Build and push each service:
-    %{for svc in local.enabled_services~}
-    docker build -t ${module.ecr.repository_urls[svc]}:latest ../${svc}/
-    docker push ${module.ecr.repository_urls[svc]}:latest
-    %{endfor~}
-
-    # 3. Force new deployment of all services:
-    %{for svc in local.enabled_services~}
-    aws ecs update-service --cluster ${local.name_prefix} \
-      --service ${local.name_prefix}-${svc} --force-new-deployment
-    %{endfor~}
-
-    # 4. Verify platform health:
-    curl ${var.enable_cdn ? "https://${module.cdn[0].domain_name}" : "http://${module.loadbalancer.alb_dns_name}"}/api/v1/health
-
-    # 5. Subscribe to alerts (replace with your email):
-    aws sns subscribe --topic-arn ${module.monitoring.sns_topic_arn} \
-      --protocol email --notification-endpoint your@email.com
-
-  EOT
 }

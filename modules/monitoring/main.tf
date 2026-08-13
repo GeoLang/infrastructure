@@ -25,10 +25,10 @@ variable "alb_arn_suffix" {
   type        = string
 }
 
-variable "rds_instance_id" {
-  description = "RDS instance identifier (empty if no DB)"
-  type        = string
-  default     = ""
+variable "rds_instance_ids" {
+  description = "RDS instance identifiers to alarm on"
+  type        = set(string)
+  default     = []
 }
 
 variable "tags" {
@@ -114,9 +114,9 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
 # ─── RDS Alarms (conditional) ────────────────────────────────────────────────
 
 resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
-  count = var.rds_instance_id != "" ? 1 : 0
+  for_each = var.rds_instance_ids
 
-  alarm_name          = "${var.name_prefix}-rds-cpu-high"
+  alarm_name          = "${each.key}-cpu-high"
   comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 3
   metric_name         = "CPUUtilization"
@@ -124,20 +124,20 @@ resource "aws_cloudwatch_metric_alarm" "rds_cpu" {
   period              = 300
   statistic           = "Average"
   threshold           = 80
-  alarm_description   = "RDS CPU utilization high"
+  alarm_description   = "RDS CPU utilization high on ${each.key}"
   alarm_actions       = [aws_sns_topic.alerts.arn]
 
   dimensions = {
-    DBInstanceIdentifier = var.rds_instance_id
+    DBInstanceIdentifier = each.key
   }
 
   tags = var.tags
 }
 
 resource "aws_cloudwatch_metric_alarm" "rds_storage" {
-  count = var.rds_instance_id != "" ? 1 : 0
+  for_each = var.rds_instance_ids
 
-  alarm_name          = "${var.name_prefix}-rds-storage-low"
+  alarm_name          = "${each.key}-storage-low"
   comparison_operator = "LessThanThreshold"
   evaluation_periods  = 1
   metric_name         = "FreeStorageSpace"
@@ -145,11 +145,11 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage" {
   period              = 300
   statistic           = "Average"
   threshold           = 2000000000 # 2 GB
-  alarm_description   = "RDS free storage below 2 GB"
+  alarm_description   = "RDS free storage below 2 GB on ${each.key}"
   alarm_actions       = [aws_sns_topic.alerts.arn]
 
   dimensions = {
-    DBInstanceIdentifier = var.rds_instance_id
+    DBInstanceIdentifier = each.key
   }
 
   tags = var.tags
