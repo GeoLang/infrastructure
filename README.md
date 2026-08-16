@@ -166,7 +166,7 @@ Every route is gated on an `ENABLE_*` environment variable that Terraform sets f
 
 The minimal profile runs TileTopia, GeoLang API, and ViewTopia, so its Fenestra, Agora, geoplumb, Jupyter, Geokode, Itinera, Interiora, geodukt, and Ptolemy paths all return 501. One combination stays approximate: when Ptolemy runs and TileTopia does not, TileTopia's `/api/v1` paths reach Ptolemy's catch-all and take its 404 instead of a 501. Neither profile uses that combination.
 
-CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths keep their existing cache policies.
+CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths (`/tiles/v1/assets/*/tileset.json`, `/tiles/v1/assets/*/tiles/*`, `/tiles/v1/terrain/*`) keep long TTLs. Those are the URLs the viewer requests; the proxy rewrites them to tiletopia after CloudFront.
 
 When `enable_cdn` is true, the load balancer admits only the AWS-managed `com.amazonaws.global.cloudfront.origin-facing` prefix list, so the CDN cannot be bypassed by calling the load balancer name directly. That prefix list counts as 55 of a security group's 60 rules, which leaves room for one port. The admitted port is 443 when a domain is configured, because CloudFront then reaches the origin over HTTPS, and 80 otherwise. Without a CDN the load balancer is the only way in and stays open.
 

@@ -219,12 +219,13 @@ resource "aws_cloudfront_distribution" "main" {
   # response is identical for every caller. If tile reads ever become per-user,
   # these TTLs have to go to 0 with them.
   #
-  # The tileset and the tile payloads it references are two routes, so they need
-  # a pattern each. A CloudFront wildcard crosses slashes while is_public_read
-  # matches whole segments, so a longer path that still fits these patterns is
-  # refused at the origin rather than served from a shared cache entry.
+  # The viewer asks for /tiles/v1/...; the proxy rewrites that to tiletopia
+  # /api/v1/... after CloudFront, so these patterns have to match the public
+  # path. A CloudFront wildcard crosses slashes while is_public_read matches
+  # whole segments, so a longer path that still fits these patterns is refused
+  # at the origin rather than served from a shared cache entry.
   ordered_cache_behavior {
-    path_pattern           = "/api/v1/assets/*/tileset.json"
+    path_pattern           = "/tiles/v1/assets/*/tileset.json"
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "alb"
@@ -242,7 +243,7 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   ordered_cache_behavior {
-    path_pattern           = "/api/v1/assets/*/tiles/*"
+    path_pattern           = "/tiles/v1/assets/*/tiles/*"
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "alb"
@@ -261,7 +262,7 @@ resource "aws_cloudfront_distribution" "main" {
 
   # Terrain tiles, cache aggressively
   ordered_cache_behavior {
-    path_pattern           = "/api/v1/terrain/*"
+    path_pattern           = "/tiles/v1/terrain/*"
     allowed_methods        = ["GET", "HEAD"]
     cached_methods         = ["GET", "HEAD"]
     target_origin_id       = "alb"
