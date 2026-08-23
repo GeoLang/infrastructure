@@ -148,6 +148,12 @@ variable "enable_database" {
   default     = true
 }
 
+variable "enable_database_secret_refresh" {
+  description = "Refresh runtime database URLs after RDS password rotation"
+  type        = bool
+  default     = true
+}
+
 variable "db_instance_class" {
   description = "RDS instance class"
   type        = string

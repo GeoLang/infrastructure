@@ -155,6 +155,7 @@ locals {
       geolang-user-data = { path = "/geolang/user-data", uid = 1000, gid = 1000 }
       geolang-live-data = { path = "/geolang/live-data", uid = 1000, gid = 1000 }
     } : {},
+    var.enable_geolang || var.enable_geolang_executor ? { geolang-natural-earth = { path = "/geolang/natural-earth", uid = 1000, gid = 1000 } } : {},
     var.enable_geolang ? { geolang-cache = { path = "/geolang/cache", uid = 1000, gid = 1000 } } : {},
     var.enable_fenestra ? { fenestra-coverages = { path = "/fenestra-coverages", uid = 1000, gid = 1000 } } : {},
     var.enable_jupyter ? { jupyter-work = { path = "/jupyter-work", uid = 1000, gid = 100 } } : {},
@@ -560,14 +561,16 @@ module "ecs" {
           { name = "GEOLANG_EXECUTOR_SECRET", valueFrom = local.runtime_secret_arns["geolang_executor"] },
         ] : []
         efs_volumes = var.enable_efs ? {
-          geolang-outputs   = local.efs_volumes["geolang-outputs"]
-          geolang-user-data = local.efs_volumes["geolang-user-data"]
-          geolang-live-data = local.efs_volumes["geolang-live-data"]
+          geolang-outputs       = local.efs_volumes["geolang-outputs"]
+          geolang-user-data     = local.efs_volumes["geolang-user-data"]
+          geolang-live-data     = local.efs_volumes["geolang-live-data"]
+          geolang-natural-earth = local.efs_volumes["geolang-natural-earth"]
         } : {}
         mount_points = var.enable_efs ? [
           { source_volume = "geolang-outputs", container_path = "/app/geolang/outputs" },
           { source_volume = "geolang-user-data", container_path = "/app/geolang/user_data" },
           { source_volume = "geolang-live-data", container_path = "/app/geolang/live_data" },
+          { source_volume = "geolang-natural-earth", container_path = "/app/geolang/natural_earth" },
         ] : []
       }
     } : {},
@@ -601,16 +604,18 @@ module "ecs" {
           lookup(local.runtime_secret_arns, "geolang_executor", "") != "" ? [{ name = "GEOLANG_EXECUTOR_SECRET", valueFrom = local.runtime_secret_arns["geolang_executor"] }] : [],
         )
         efs_volumes = var.enable_efs ? {
-          geolang-cache     = local.efs_volumes["geolang-cache"]
-          geolang-outputs   = local.efs_volumes["geolang-outputs"]
-          geolang-user-data = local.efs_volumes["geolang-user-data"]
-          geolang-live-data = local.efs_volumes["geolang-live-data"]
+          geolang-cache         = local.efs_volumes["geolang-cache"]
+          geolang-outputs       = local.efs_volumes["geolang-outputs"]
+          geolang-user-data     = local.efs_volumes["geolang-user-data"]
+          geolang-live-data     = local.efs_volumes["geolang-live-data"]
+          geolang-natural-earth = local.efs_volumes["geolang-natural-earth"]
         } : {}
         mount_points = var.enable_efs ? [
           { source_volume = "geolang-cache", container_path = "/app/cache" },
           { source_volume = "geolang-outputs", container_path = "/app/geolang/outputs" },
           { source_volume = "geolang-user-data", container_path = "/app/geolang/user_data" },
           { source_volume = "geolang-live-data", container_path = "/app/geolang/live_data" },
+          { source_volume = "geolang-natural-earth", container_path = "/app/geolang/natural_earth" },
         ] : []
       }
     } : {},

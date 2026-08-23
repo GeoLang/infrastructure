@@ -269,6 +269,11 @@ resource "aws_ecs_task_definition" "services" {
   execution_role_arn       = aws_iam_role.ecs_execution.arn
   task_role_arn            = each.value.runs_untrusted_code ? aws_iam_role.ecs_task_untrusted_code.arn : aws_iam_role.ecs_task.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
   dynamic "volume" {
     for_each = each.value.efs_volumes
     content {

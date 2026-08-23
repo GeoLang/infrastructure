@@ -26,7 +26,7 @@ Terraform does not build images, populate secret values, load spatial data, crea
 
 CloudFront sends requests to an Application Load Balancer. The load balancer has one catch-all target, the platform proxy. The proxy resolves private ECS services through Cloud Map. Its rewrites are close to `viewtopia/deploy/nginx-platform.conf` but not identical, so use the routing table below as the contract rather than the compose config.
 
-Two differences matter. The compose nginx routes `/collecta/*` to collecta with the prefix stripped. The Caddyfile has no collecta route, no `ENABLE_COLLECTA` gate, and no `/collecta/*` entry in its `@undeployed` list, so those requests fall through to the catch-all and get ViewTopia's `index.html` with a 200 instead of the 501 an undeployed service should answer. In the other direction the Caddyfile sends `/api/v1/assets`, `/api/v1/terrain/*`, and `/api/v1/catalog*` to TileTopia where nginx sends them to Ptolemy.
+Two differences matter. The compose nginx routes `/collecta/*` to Collecta with the prefix stripped. Terraform deploys no Collecta service, so the hosted proxy returns 501 for `/collecta` and `/collecta/*`. In the other direction the Caddyfile sends `/api/v1/assets`, `/api/v1/terrain/*`, and `/api/v1/catalog*` to TileTopia where nginx sends them to Ptolemy.
 
 The proxy image is buildable from [containers/platform-proxy](containers/platform-proxy). Its Caddy image is pinned to `caddy:2.11.4-alpine`.
 
@@ -36,7 +36,7 @@ The Jupyter image is pinned to `quay.io/jupyter/scipy-notebook:2025-12-31`. That
 
 Ptolemy and Agora use separate encrypted RDS PostgreSQL 16 instances. RDS manages each master password in Secrets Manager. Ptolemy enables its required PostGIS extensions during its own migrations.
 
-Both instances set `rds.force_ssl`, so a plaintext connection is refused. The `ptolemy_database_url` and `agora_database_url` secret values must end in `?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem`, and the service has to be built with a `sqlx` TLS backend.
+Both instances set `rds.force_ssl`, so a plaintext connection is refused. The `ptolemy_database_url` and `agora_database_url` secret values must end in `?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem`. Ptolemy and Agora already use the `sqlx` Rustls backend.
 
 Do not use `sslmode=require` here. Under `require`, sqlx installs a certificate verifier that accepts any certificate and ignores `sslrootcert`, so the connection is encrypted but the server is never authenticated and anything answering in the database's place can read and rewrite the session. Only `verify-ca` and `verify-full` check the chain.
 
@@ -53,16 +53,17 @@ EFS access points provide persistent storage for:
 - Fenestra coverages
 - Sibyl's SQLite database
 - GeoLang's cache
+- GeoLang Natural Earth reference data shared by the API and executor at `/app/geolang/natural_earth`
 - GeoLang outputs, user data, and live data shared with geodukt and the executor
 - Jupyter notebooks under `/home/jovyan/work`
 
-Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point.
+Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point. Place GeoLang Natural Earth data in the GeoLang Natural Earth access point.
 
 geoplumb uses a real public STAC layer configuration copied into its wrapper image from [containers/geoplumb/layers.toml](containers/geoplumb/layers.toml). The configuration has no credentials. Its image is built in two steps so the configuration is part of an immutable deployable artifact.
 
 ## Runtime secrets
 
-No credential belongs in a Terraform value, generated file, image command, or process argument. ECS injects runtime values from AWS Secrets Manager or SSM Parameter Store.
+No credential belongs in a Terraform value, checked-in file, image command, or process argument. ECS injects runtime values from AWS Secrets Manager or SSM Parameter Store.
 
 When `enable_secrets` is true, Terraform creates the empty Secrets Manager resources needed by the enabled services. The full profile uses these keys:
 
@@ -73,15 +74,20 @@ When `enable_secrets` is true, Terraform creates the empty Secrets Manager resou
 - `llm_api_key`, exposed to Sibyl as `XAI_API_KEY`
 - `jupyter_token`, exposed to Jupyter as `JUPYTER_TOKEN`
 
-Terraform deliberately creates no secret versions. Populate the values outside Terraform after the first infrastructure apply. The two database URL secrets can be assembled from the corresponding RDS endpoint and RDS managed credential secret. Keep those URLs out of shell arguments and command history. The AWS console or a command that reads the value from standard input is appropriate.
+Terraform deliberately creates no secret versions. Populate the four operator-managed values after the first infrastructure apply. Each command reads the value from a silent prompt or standard input, writes it through a mode 600 temporary file, and removes that file on exit:
 
-Warning: a hand-assembled database URL expires. Both instances set `manage_master_user_password = true`, and AWS rotates a managed master password every seven days by default. Nothing in this stack pins or disables that schedule, and nothing writes a new version of `ptolemy_database_url` or `agora_database_url`. A copied password stops working about a week after launch and Ptolemy and Agora lose their databases. Before going live, do one of the following:
+```bash
+./scripts/put-runtime-secret.sh platform_jwt
+./scripts/put-runtime-secret.sh geolang_executor
+./scripts/put-runtime-secret.sh llm_api_key
+./scripts/put-runtime-secret.sh jupyter_token
+```
 
-- Disable or lengthen rotation on each RDS managed credential secret, and accept that the password is then static.
-- Have each service read the RDS managed secret directly at startup and build its own connection URL, so no copy of the password exists in a separate secret.
-- Keep the copy and run a rotation-triggered job that rewrites both URL secrets and redeploys the services.
+Do not use this command for the two database URLs. When `enable_database_secret_refresh` is true, Terraform deploys a Python 3.13 Lambda and an EventBridge schedule for those values. Every 15 minutes it reads the RDS-managed credentials, builds the verified direct-endpoint URL, updates a changed runtime URL secret, forces the matching ECS service to deploy new tasks, and waits for the service to stabilize. A failed ECS update restores the previous secret version so the next schedule retries. No password enters Terraform configuration, state, process arguments, or logs.
 
-Existing secret resources can be supplied through `runtime_secret_arns`. Keys in that map override Terraform-managed secret ARNs. If an existing secret uses a customer managed KMS key, grant the ECS execution role permission to decrypt it.
+The first scheduled run creates the Ptolemy and Agora URL versions. RDS rotates each managed master password every seven days by default. After a rotation, new database connections can fail until the next scheduled run and ECS replacement complete. A live rotation test remains required before public use.
+
+Existing secret resources can be supplied through `runtime_secret_arns`. Keys in that map override Terraform-managed secret ARNs. The two database URL targets must be full Secrets Manager ARNs when automatic refresh is enabled. Other runtime values may use Secrets Manager or SSM. If an existing secret uses a customer managed KMS key, grant the ECS execution role permission to decrypt it. The refresh Lambda has no wildcard KMS permission, so a customer managed key for either database secret needs an explicit policy change before use.
 
 `runtime_secrets_ready = true` is an operator assertion. Terraform verifies that an ARN exists for every secret required by the enabled services. Terraform cannot verify that an externally populated secret contains a usable value. Leave the flag false until all image, data, and secret inputs are ready. This keeps empty managed secrets and empty ECR repositories from causing ECS restart loops.
 
@@ -94,6 +100,14 @@ One token also means one shared credential to a server that runs arbitrary code 
 Terraform creates ECR repositories but does not build or push images. Use the repository URLs from `terraform output -json ecr_repositories`.
 
 Repository tags are immutable. A repository rejects a push to a tag it already holds, so every build needs its own tag and there is no moving `latest`. Every service deploys the tag in `image_tag`, which defaults to `v0.1.0`. Push the new tag, then change `image_tag` to roll the platform. The repository lifecycle policy keeps the last ten tags beginning with `v`.
+
+After the first infrastructure apply creates the repositories, publish every enabled image from the sibling checkouts with one tag:
+
+```bash
+./scripts/publish-images.sh v0.1.0
+```
+
+The command reads `ecr_repositories` from Terraform state, rejects any tag that already exists, builds every image for Linux x86_64, then logs in and pushes only after all builds pass. It requires Terraform, the AWS CLI, Docker Buildx, and jq. The tag passed here must also be the Terraform `image_tag` used for the readiness apply.
 
 Build these repositories from their existing service contexts:
 
@@ -114,20 +128,9 @@ platform-proxy   containers/platform-proxy
 
 There are thirteen ECR repositories. `geolang-api` is the thirteenth, and both the GeoLang API and the GeoLang executor deploy from it, so it is one build and one push for two services.
 
-Build the geoplumb wrapper with the same final base image name used in its first build:
+The publication command builds the geoplumb base first, then builds its wrapper with the same local base image. The platform proxy uses its explicit context under `containers/platform-proxy`.
 
-```bash
-docker build -t geoplumb-base:local ../geoplumb
-docker build --build-arg GEOPLUMB_BASE_IMAGE=geoplumb-base:local -t <geoplumb-ecr-url>:v0.1.0 containers/geoplumb
-```
-
-The platform proxy has an explicit build context:
-
-```bash
-docker build -t <platform-proxy-ecr-url>:v0.1.0 containers/platform-proxy
-```
-
-GeoLang API and GeoLang executor use the same image from the `geolang-api` repository. The current `../geolang/Dockerfile` installs dependencies but does not copy the application source because compose bind mounts the repository into `/app/geolang`. Do not set `runtime_secrets_ready` to true until the operator supplies a corrected image that contains the GeoLang source. This is the remaining image blocker for a hosted launch.
+GeoLang API and GeoLang executor use the same image from the `geolang-api` repository. The image contains `src/` and uses a deny-first `.dockerignore` so local runtime data and secret files do not enter the build context. A local build verified both API entry points and both health routes without a bind mount on 2026-08-22. The image still needs an immutable ECR tag before hosted scale-up.
 
 Jupyter pulls its pinned Quay image directly and has no ECR repository.
 
@@ -152,9 +155,9 @@ On the platform profile the first apply cannot finish in one pass. The load bala
 
 After that second apply:
 
-1. Build and push every enabled ECR image.
+1. Run `./scripts/publish-images.sh <image_tag>` to build and push every enabled ECR image.
 2. Stage the required files in EFS.
-3. Populate all required runtime secret values.
+3. Populate the four operator-managed runtime secrets and wait for the database refresh job to create both URL secret versions.
 4. Distribute the Jupyter token to the people who need notebooks. There is nothing to configure at deploy time, because each user pastes the token into ViewTopia's notebook settings in their own browser.
 5. Set `runtime_secrets_ready = true`.
 6. Review a new plan before applying it.
@@ -180,11 +183,12 @@ The proxy preserves or strips paths according to the current platform compose co
 - `/api/v1/auth/oidc/*`, remaining `/api/*`, and `/ws/*` to Ptolemy
 - TileTopia auth, portal, assets, terrain, and catalog paths to TileTopia
 - `/jupyter/*` to Jupyter with the path preserved
+- `/collecta` and `/collecta/*` to the explicit undeployed-service 501 response
 - remaining requests to ViewTopia
 
 Every route is gated on an `ENABLE_*` environment variable that Terraform sets from the profile's service toggles. A profile that leaves a service out answers 501 on that service's paths instead of proxying to a Cloud Map name that does not resolve. The gates default to closed, so the proxy serves a route only when the deployment names the service.
 
-The minimal profile runs TileTopia, GeoLang API, and ViewTopia, so its Fenestra, Agora, geoplumb, Jupyter, Geokode, Itinera, Interiora, geodukt, and Ptolemy paths all return 501. One combination stays approximate: when Ptolemy runs and TileTopia does not, TileTopia's `/api/v1` paths reach Ptolemy's catch-all and take its 404 instead of a 501. Neither profile uses that combination.
+The minimal profile runs TileTopia, GeoLang API, and ViewTopia, so its Collecta, Fenestra, Agora, geoplumb, Jupyter, Geokode, Itinera, Interiora, geodukt, and Ptolemy paths all return 501. One combination stays approximate: when Ptolemy runs and TileTopia does not, TileTopia's `/api/v1` paths reach Ptolemy's catch-all and take its 404 instead of a 501. Neither profile uses that combination.
 
 CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths (`/tiles/v1/assets/*/tileset.json`, `/tiles/v1/assets/*/tiles/*`, `/tiles/v1/terrain/*`) keep long TTLs. Those are the URLs the viewer requests; the proxy rewrites them to tiletopia after CloudFront.
 
@@ -239,10 +243,9 @@ The ElastiCache and SQS resources the platform profile enables have no consumer.
 
 The infrastructure can be planned before these are resolved, with all services held at zero:
 
-- The GeoLang image must be changed or supplied so it contains the application source.
 - The Ptolemy and Agora database URL secrets must use `sslmode=verify-full` with `sslrootcert`, or they cannot connect to a database that forces SSL. The image side of this is already done: both services name the `tls-rustls-ring` sqlx backend.
 - Every enabled ECR image must be pushed under the tag in `image_tag`.
-- EFS spatial and coverage data must be staged.
+- EFS spatial, coverage, and GeoLang Natural Earth data must be staged.
 - All required secret containers must have a current value.
 - DNS delegation and ACM validation must complete when the platform profile uses `geolang.com`.
 - The RDS engine version is pinned to `16.4`, released in August 2024. Verify that minor is still offered in the target region before applying, since RDS drops old minors and the instance create fails if it is gone.

@@ -1,6 +1,5 @@
 # Terraform state and provider files
 .terraform/
-.terraform.lock.hcl
 *.tfstate
 *.tfstate.backup
 terraform.tfvars
@@ -11,6 +10,10 @@ override.tf.json
 *_override.tf.json
 .terraformrc
 terraform.rc
+
+# Python
+__pycache__/
+*.py[cod]
 
 # OS
 .DS_Store

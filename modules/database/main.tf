@@ -151,8 +151,7 @@ resource "aws_db_parameter_group" "postgis" {
     value = "pg_stat_statements"
   }
 
-  # the database URL secrets have to carry sslmode=require to match, and the
-  # client has to be built with a TLS backend or every connection is refused
+  # hosted database URLs need verify-full and the AWS RDS CA bundle
   parameter {
     name  = "rds.force_ssl"
     value = "1"

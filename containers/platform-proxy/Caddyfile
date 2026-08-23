@@ -11,7 +11,7 @@
 
 		# the /api/* style handles below only match the slashed form, so send the
 		# bare prefix down the same route
-		@bare_prefix path /agent /tiles /ogc /agora /plumb /jupyter /api /ws /api/geocode /api/indoor /api/delivery
+		@bare_prefix path /agent /tiles /ogc /agora /plumb /jupyter /collecta /api /ws /api/geocode /api/indoor /api/delivery
 		rewrite @bare_prefix {path}/
 
 		@agent {
@@ -158,7 +158,7 @@
 
 		# anything still carrying a platform prefix here belongs to a service this
 		# deployment does not run
-		@undeployed path /agent/* /tiles/* /ogc/* /agora/* /plumb/* /jupyter/* /api/* /ws/*
+		@undeployed path /agent/* /tiles/* /ogc/* /agora/* /plumb/* /jupyter/* /collecta/* /api/* /ws/*
 		handle @undeployed {
 			error "this deployment does not run the service that serves this path" 501
 		}
