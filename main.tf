@@ -494,9 +494,10 @@ module "ecs" {
           { name = "GEOLANG_URL", value = "http://geolang-api.${local.sd_suffix}:8080" },
           { name = "RUST_LOG", value = "info" },
         ]
-        secrets = lookup(local.runtime_secret_arns, "llm_api_key", "") != "" ? [
-          { name = "XAI_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] },
-        ] : []
+        secrets = concat(
+          lookup(local.runtime_secret_arns, "llm_api_key", "") != "" ? [{ name = "XAI_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] }] : [],
+          lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
+        )
         efs_volumes = var.enable_efs ? { sibyl = local.efs_volumes["sibyl"] } : {}
         mount_points = var.enable_efs ? [
           { source_volume = "sibyl", container_path = "/data" },
