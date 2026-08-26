@@ -71,7 +71,7 @@ When `enable_secrets` is true, Terraform creates the empty Secrets Manager resou
 - `ptolemy_database_url`, the complete Ptolemy PostgreSQL URL
 - `agora_database_url`, the complete Agora PostgreSQL URL
 - `geolang_executor`, shared only by the GeoLang API and executor
-- `llm_api_key`, exposed to Sibyl as `XAI_API_KEY`
+- `llm_api_key`, exposed to Sibyl as `SIBYL_CLOUD_API_KEY`
 - `jupyter_token`, exposed to Jupyter as `JUPYTER_TOKEN`
 
 Terraform deliberately creates no secret versions. Populate the four operator-managed values after the first infrastructure apply. Each command reads the value from a silent prompt or standard input, writes it through a mode 600 temporary file, and removes that file on exit:

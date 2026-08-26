@@ -495,7 +495,7 @@ module "ecs" {
           { name = "RUST_LOG", value = "info" },
         ]
         secrets = concat(
-          lookup(local.runtime_secret_arns, "llm_api_key", "") != "" ? [{ name = "XAI_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] }] : [],
+          lookup(local.runtime_secret_arns, "llm_api_key", "") != "" ? [{ name = "SIBYL_CLOUD_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] }] : [],
           lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
         )
         efs_volumes = var.enable_efs ? { sibyl = local.efs_volumes["sibyl"] } : {}
