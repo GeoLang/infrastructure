@@ -101,7 +101,7 @@ output "bastion_ssm_command" {
 
 output "bastion_db_tunnel_command" {
   description = "SSM port-forwarding command for RDS access"
-  value       = var.enable_bastion ? module.bastion[0].db_tunnel_command : "Bastion disabled"
+  value       = var.enable_bastion && var.enable_database ? module.bastion[0].db_tunnel_command : "Bastion or database disabled"
 }
 
 # ─── Autoscaling ─────────────────────────────────────────────────────────────

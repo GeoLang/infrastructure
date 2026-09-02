@@ -29,6 +29,12 @@ variable "allowed_cidrs" {
   default     = []
 }
 
+variable "database_host" {
+  description = "RDS hostname the port-forwarding session targets"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
@@ -157,6 +163,6 @@ output "ssm_connect_command" {
 }
 
 output "db_tunnel_command" {
-  description = "Command to create an SSH tunnel to RDS (requires SSH key)"
-  value       = "aws ssm start-session --target ${aws_instance.bastion.id} --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '{\"portNumber\":[\"5432\"],\"localPortNumber\":[\"5432\"]}'"
+  description = "SSM port-forwarding command that reaches RDS through the bastion"
+  value       = "aws ssm start-session --target ${aws_instance.bastion.id} --document-name AWS-StartPortForwardingSessionToRemoteHost --parameters '{\"host\":[\"${var.database_host}\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"5432\"]}'"
 }

@@ -11,7 +11,7 @@
 
 		# the /api/* style handles below only match the slashed form, so send the
 		# bare prefix down the same route
-		@bare_prefix path /agent /tiles /ogc /agora /plumb /jupyter /collecta /api /ws /api/geocode /api/indoor /api/delivery
+		@bare_prefix path /agent /tiles /martin /ogc /agora /plumb /jupyter /collecta /speech /api /ws /api/geocode /api/indoor /api/delivery
 		rewrite @bare_prefix {path}/
 
 		@agent {
@@ -21,6 +21,27 @@
 		handle @agent {
 			uri strip_prefix /agent
 			reverse_proxy geolang-api.{$SERVICE_DISCOVERY_NAMESPACE}:8080
+		}
+
+		# the chat microphone streams audio to aavaaz's WhisperLive websocket on
+		# 9090 and probes health on its REST port. terraform sets no
+		# ENABLE_AAVAAZ, so /speech answers 501 until a deployment names it.
+		@speech_health {
+			expression {$ENABLE_AAVAAZ:false}
+			path /speech/health
+		}
+		handle @speech_health {
+			rewrite * /health
+			reverse_proxy aavaaz.{$SERVICE_DISCOVERY_NAMESPACE}:8000
+		}
+
+		@speech {
+			expression {$ENABLE_AAVAAZ:false}
+			path /speech/*
+		}
+		handle @speech {
+			uri strip_prefix /speech
+			reverse_proxy aavaaz.{$SERVICE_DISCOVERY_NAMESPACE}:9090
 		}
 
 		@tiletopia_realtime {
@@ -43,6 +64,16 @@
 				rewrite * /api{path}
 				reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 			}
+		}
+
+		# tiletopia's own routes are /martin/catalog, /martin/{source} and
+		# /martin/{source}/{z}/{x}/{y}, so the path is passed through unchanged
+		@martin {
+			expression {$ENABLE_TILETOPIA:false}
+			path /martin/*
+		}
+		handle @martin {
+			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
 		@ogc {
@@ -158,7 +189,7 @@
 
 		# anything still carrying a platform prefix here belongs to a service this
 		# deployment does not run
-		@undeployed path /agent/* /tiles/* /ogc/* /agora/* /plumb/* /jupyter/* /collecta/* /api/* /ws/*
+		@undeployed path /agent/* /tiles/* /martin/* /ogc/* /agora/* /plumb/* /jupyter/* /collecta/* /speech/* /api/* /ws/*
 		handle @undeployed {
 			error "this deployment does not run the service that serves this path" 501
 		}

@@ -840,6 +840,7 @@ module "bastion" {
   public_subnet_id = module.networking.public_subnet_ids[0]
   instance_type    = var.bastion_instance_type
   allowed_cidrs    = var.bastion_allowed_cidrs
+  database_host    = var.enable_database ? module.database[0].address : ""
 
   tags = local.tags
 }

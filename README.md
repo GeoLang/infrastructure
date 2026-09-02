@@ -24,9 +24,9 @@ Terraform does not build images, populate secret values, load spatial data, crea
 - GeoLang executor
 - Jupyter
 
-CloudFront sends requests to an Application Load Balancer. The load balancer has one catch-all target, the platform proxy. The proxy resolves private ECS services through Cloud Map. Its rewrites are close to `viewtopia/deploy/nginx-platform.conf` but not identical, so use the routing table below as the contract rather than the compose config.
+CloudFront sends requests to an Application Load Balancer. The load balancer has one catch-all target, the platform proxy. The proxy resolves private ECS services through Cloud Map. Its rewrites are close to `viewtopia/deploy/nginx-platform.conf` but not identical, so use the routing list below as the contract rather than the compose config.
 
-Two differences matter. The compose nginx routes `/collecta/*` to Collecta with the prefix stripped. Terraform deploys no Collecta service, so the hosted proxy returns 501 for `/collecta` and `/collecta/*`. In the other direction the Caddyfile sends `/api/v1/assets`, `/api/v1/terrain/*`, and `/api/v1/catalog*` to TileTopia where nginx sends them to Ptolemy.
+Two differences matter. The compose nginx routes `/collecta/*` to Collecta and `/speech/*` to the aavaaz speech service. Terraform deploys neither, so the hosted proxy returns 501 for `/collecta`, `/speech`, and everything under them. In the other direction the Caddyfile sends `/api/v1/assets`, `/api/v1/terrain/*`, and `/api/v1/catalog*` to TileTopia where nginx sends them to Ptolemy.
 
 The proxy image is buildable from [containers/platform-proxy](containers/platform-proxy). Its Caddy image is pinned to `caddy:2.11.4-alpine`.
 
@@ -126,7 +126,7 @@ geolang-api      ../geolang
 platform-proxy   containers/platform-proxy
 ```
 
-There are thirteen ECR repositories. `geolang-api` is the thirteenth, and both the GeoLang API and the GeoLang executor deploy from it, so it is one build and one push for two services.
+There are thirteen ECR repositories. The table lists twelve, and geoplumb is the thirteenth. Both the GeoLang API and the GeoLang executor deploy from `geolang-api`, so it is one build and one push for two services.
 
 The publication command builds the geoplumb base first, then builds its wrapper with the same local base image. The platform proxy uses its explicit context under `containers/platform-proxy`.
 
@@ -173,6 +173,7 @@ The proxy preserves or strips paths according to the current platform compose co
 - `/agent/*` to GeoLang API with `/agent` removed
 - `/api/v1/realtime/*` to TileTopia with the path preserved
 - `/tiles/*` to TileTopia as `/api/*`
+- `/martin/*` to TileTopia with the path preserved, for vector tile archives
 - `/ogc/*` to Fenestra with `/ogc` removed
 - `/api/delivery/*`, `/api/route`, `/api/isochrone`, and `/api/network/*` to Itinera
 - `/api/pipeline/runs*` to geodukt as `/runs*`
@@ -183,12 +184,14 @@ The proxy preserves or strips paths according to the current platform compose co
 - `/api/v1/auth/oidc/*`, remaining `/api/*`, and `/ws/*` to Ptolemy
 - TileTopia auth, portal, assets, terrain, and catalog paths to TileTopia
 - `/jupyter/*` to Jupyter with the path preserved
-- `/collecta` and `/collecta/*` to the explicit undeployed-service 501 response
+- `/collecta`, `/collecta/*`, `/speech`, and `/speech/*` to the explicit undeployed-service 501 response
+- `/health` to the proxy's own `ok`, which is what the load balancer target group checks
+- `/metrics` to a 404 from the proxy, so no service's Prometheus output reaches the edge
 - remaining requests to ViewTopia
 
 Every route is gated on an `ENABLE_*` environment variable that Terraform sets from the profile's service toggles. A profile that leaves a service out answers 501 on that service's paths instead of proxying to a Cloud Map name that does not resolve. The gates default to closed, so the proxy serves a route only when the deployment names the service.
 
-The minimal profile runs TileTopia, GeoLang API, and ViewTopia, so its Collecta, Fenestra, Agora, geoplumb, Jupyter, Geokode, Itinera, Interiora, geodukt, and Ptolemy paths all return 501. One combination stays approximate: when Ptolemy runs and TileTopia does not, TileTopia's `/api/v1` paths reach Ptolemy's catch-all and take its 404 instead of a 501. Neither profile uses that combination.
+The minimal profile runs TileTopia, GeoLang API, and ViewTopia, so its Collecta, speech, Fenestra, Agora, geoplumb, Jupyter, Geokode, Itinera, Interiora, geodukt, and Ptolemy paths all return 501. Its `/martin/*` paths reach TileTopia along with the rest of its tile paths. One combination stays approximate: when Ptolemy runs and TileTopia does not, TileTopia's `/api/v1` paths reach Ptolemy's catch-all and take its 404 instead of a 501. Neither profile uses that combination.
 
 CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths (`/tiles/v1/assets/*/tileset.json`, `/tiles/v1/assets/*/tiles/*`, `/tiles/v1/terrain/*`) keep long TTLs. Those are the URLs the viewer requests; the proxy rewrites them to tiletopia after CloudFront.
 
@@ -208,6 +211,16 @@ That is a second layer, not the only one. Agora authenticates its own requests. 
 
 The GeoLang executor has a group whose egress is limited to its tool call targets, DNS, EFS, and outbound HTTPS. Jupyter has a fourth group with no tool call egress at all, since notebooks call no platform service. Both of those run user-supplied code and use a task role that holds no policies.
 
+## Bastion, firewall, and backups
+
+The platform profile turns on three things the sections above do not cover.
+
+`enable_bastion` puts a `bastion_instance_type` Amazon Linux 2023 instance in a public subnet with the SSM managed instance policy, IMDSv2 only, and an encrypted root volume. It opens no SSH port unless `bastion_allowed_cidrs` names a CIDR. Its security group is admitted to both database instances on 5432, so it is a fifth path to the data alongside the four task groups. `terraform output bastion_ssm_command` prints the session command. `bastion_db_tunnel_command` prints a ready-to-run `AWS-StartPortForwardingSessionToRemoteHost` command whose `host` parameter is the Ptolemy database hostname. It forwards local port 5432 to the database, so it prints `Bastion or database disabled` unless both `enable_bastion` and `enable_database` are true.
+
+`enable_waf` creates a regional web ACL, attaches it to the load balancer, and logs to the `aws-waf-logs-geolang-prod` CloudWatch group for 30 days. It default-allows and adds a rate limit of `waf_rate_limit` requests per five minutes, the AWS common, known bad inputs, SQL injection, and Linux managed rule groups, and a country block when `waf_blocked_countries` is set. The common rule set counts rather than blocks `SizeRestrictions_BODY` and `CrossSiteScripting_BODY`, since large and XML-shaped geospatial payloads trip both. The rate limit aggregates on the address the load balancer sees, and with the CDN in front that is the CloudFront edge that forwarded the request, so one limit covers every client behind an edge. Keying it on the client would need a forwarded IP configuration over `X-Forwarded-For`.
+
+`enable_backup` creates a vault and a plan covering both database instances and the EFS file system. A daily backup at 03:00 UTC is deleted after `backup_retention_days`, and a Sunday backup is kept three times as long. Cross-region copies are off unless `enable_cross_region_backup` is set, and the copy target is the `Default` vault in `dr_region`, which this stack does not create.
+
 ## Validation
 
 Run the local checks without contacting AWS:
@@ -218,7 +231,17 @@ terraform init -backend=false
 terraform validate
 ```
 
-The GitHub workflow runs the same format and validation checks. Its manual plan job needs AWS credentials because `terraform plan` reads account and region data sources. No runtime application credential is passed to Terraform.
+The GitHub workflow runs the same format and validation checks with Terraform 1.15.8, since `fmt` output tracks the toolchain version. Its manual plan job needs AWS credentials because `terraform plan` reads account and region data sources. No runtime application credential is passed to Terraform.
+
+The two shell commands and the refresh Lambda have their own tests, which stub the AWS CLI, Docker, and Terraform and so contact nothing:
+
+```bash
+bash tests/test_publish_images.sh
+bash tests/test_put_runtime_secret.sh
+python3 tests/test_refresh_database_secrets.py
+```
+
+The workflow does not run them.
 
 ## Important outputs
 
@@ -235,9 +258,9 @@ The GitHub workflow runs the same format and validation checks. Its manual plan 
 
 ## Monitoring and unused resources
 
-The load balancer CloudWatch alarms and both load balancer dashboard widgets pass the ALB DNS name where the metric dimension needs the ARN suffix, so they match no metric and report no data instead of failing.
+The load balancer 5xx alarm and the load balancer dashboard widget pass the ALB DNS name where the metric dimension needs the ARN suffix, so they match no metric and report no data instead of failing. The ECS and RDS alarms name their dimensions correctly and do report, but every alarm publishes to one SNS topic that nothing subscribes to, so an alarm reaches nobody until someone adds a subscription to `alerts_topic_arn`.
 
-The ElastiCache and SQS resources the platform profile enables have no consumer. No service is given a Redis endpoint or a queue URL, so both cost money and carry no traffic.
+The ElastiCache and SQS resources the platform profile enables have no consumer. No service is given a Redis endpoint or a queue URL, so both cost money and carry no traffic. The tiles S3 bucket is the same case with one more step: TileTopia's task definition sets `AWS_S3_BUCKET` to the bucket name, and TileTopia reads no such variable, so the bucket stays empty.
 
 ## Safe apply blockers
 
