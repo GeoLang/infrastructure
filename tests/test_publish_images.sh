@@ -134,15 +134,16 @@ complete_action_log="$temporary_directory/complete-actions.log"
 complete_output="$temporary_directory/complete-output.log"
 run_publisher "$complete_repositories" absent "" "$TEST_TAG" "$complete_action_log" "$complete_output"
 
-workspace_directory="$(cd -- "$TEST_DIRECTORY/../.." && pwd)"
+infrastructure_directory="$(cd -- "$TEST_DIRECTORY/.." && pwd)"
+workspace_directory="$(cd -- "$infrastructure_directory/.." && pwd)"
 for service_name in ptolemy tiletopia geokode itinera interiora fenestra agora sibyl geodukt viewtopia
 do
   assert_contains "docker buildx build --platform linux/amd64 --load --tag $ECR_REGISTRY/$service_name:$TEST_TAG $workspace_directory/$service_name" "$complete_action_log"
 done
 assert_contains "docker buildx build --platform linux/amd64 --load --tag $ECR_REGISTRY/geolang-api:$TEST_TAG $workspace_directory/geolang" "$complete_action_log"
 assert_contains "docker buildx build --platform linux/amd64 --load --tag geoplumb-base:$TEST_TAG $workspace_directory/geoplumb" "$complete_action_log"
-assert_contains "docker buildx build --platform linux/amd64 --load --build-arg GEOPLUMB_BASE_IMAGE=geoplumb-base:$TEST_TAG --tag $ECR_REGISTRY/geoplumb:$TEST_TAG $workspace_directory/infrastructure/containers/geoplumb" "$complete_action_log"
-assert_contains "docker buildx build --platform linux/amd64 --load --tag $ECR_REGISTRY/platform-proxy:$TEST_TAG $workspace_directory/infrastructure/containers/platform-proxy" "$complete_action_log"
+assert_contains "docker buildx build --platform linux/amd64 --load --build-arg GEOPLUMB_BASE_IMAGE=geoplumb-base:$TEST_TAG --tag $ECR_REGISTRY/geoplumb:$TEST_TAG $infrastructure_directory/containers/geoplumb" "$complete_action_log"
+assert_contains "docker buildx build --platform linux/amd64 --load --tag $ECR_REGISTRY/platform-proxy:$TEST_TAG $infrastructure_directory/containers/platform-proxy" "$complete_action_log"
 assert_contains "docker login --username AWS --password-stdin $ECR_REGISTRY" "$complete_action_log"
 for service_name in ptolemy tiletopia geokode itinera interiora geoplumb fenestra agora sibyl geodukt geolang-api viewtopia platform-proxy
 do
