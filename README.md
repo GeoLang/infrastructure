@@ -217,7 +217,7 @@ The platform profile turns on three things the sections above do not cover.
 
 `enable_bastion` puts a `bastion_instance_type` Amazon Linux 2023 instance in a public subnet with the SSM managed instance policy, IMDSv2 only, and an encrypted root volume. It opens no SSH port unless `bastion_allowed_cidrs` names a CIDR. Its security group is admitted to both database instances on 5432, so it is a fifth path to the data alongside the four task groups. `terraform output bastion_ssm_command` prints the session command. `bastion_db_tunnel_command` prints a ready-to-run `AWS-StartPortForwardingSessionToRemoteHost` command whose `host` parameter is the Ptolemy database hostname. It forwards local port 5432 to the database, so it prints `Bastion or database disabled` unless both `enable_bastion` and `enable_database` are true.
 
-`enable_waf` creates a regional web ACL, attaches it to the load balancer, and logs to the `aws-waf-logs-geolang-prod` CloudWatch group for 30 days. It default-allows and adds a rate limit of `waf_rate_limit` requests per five minutes, the AWS common, known bad inputs, SQL injection, and Linux managed rule groups, and a country block when `waf_blocked_countries` is set. The common rule set counts rather than blocks `SizeRestrictions_BODY` and `CrossSiteScripting_BODY`, since large and XML-shaped geospatial payloads trip both. The rate limit aggregates on the address the load balancer sees, and with the CDN in front that is the CloudFront edge that forwarded the request, so one limit covers every client behind an edge. Keying it on the client would need a forwarded IP configuration over `X-Forwarded-For`.
+`enable_waf` creates a regional web ACL, attaches it to the load balancer, and logs to the `aws-waf-logs-geolang-prod` CloudWatch group for 30 days. It default-allows and adds a rate limit of `waf_rate_limit` requests per five minutes, the AWS common, known bad inputs, SQL injection, and Linux managed rule groups, and a country block when `waf_blocked_countries` is set. The common rule set counts rather than blocks `SizeRestrictions_BODY` and `CrossSiteScripting_BODY`, since large and XML-shaped geospatial payloads trip both. The rate limit aggregates on the address the load balancer sees. With `enable_cdn` set the load balancer sees a CloudFront edge, so the rule keys on the first address in `X-Forwarded-For` instead. A request whose `X-Forwarded-For` is malformed is not counted and not blocked.
 
 `enable_backup` creates a vault and a plan covering both database instances and the EFS file system. A daily backup at 03:00 UTC is deleted after `backup_retention_days`, and a Sunday backup is kept three times as long. Cross-region copies are off unless `enable_cross_region_backup` is set, and the copy target is the `Default` vault in `dr_region`, which this stack does not create.
 
@@ -241,7 +241,7 @@ bash tests/test_put_runtime_secret.sh
 python3 tests/test_refresh_database_secrets.py
 ```
 
-The workflow does not run them.
+The workflow runs all three on every push and pull request.
 
 ## Important outputs
 
@@ -258,9 +258,9 @@ The workflow does not run them.
 
 ## Monitoring and unused resources
 
-The load balancer 5xx alarm and the load balancer dashboard widget pass the ALB DNS name where the metric dimension needs the ARN suffix, so they match no metric and report no data instead of failing. The ECS and RDS alarms name their dimensions correctly and do report, but every alarm publishes to one SNS topic that nothing subscribes to, so an alarm reaches nobody until someone adds a subscription to `alerts_topic_arn`.
+The load balancer 5xx alarm and the load balancer dashboard widget take the ALB ARN suffix, which is what the `LoadBalancer` metric dimension matches on, so they report alongside the ECS and RDS alarms. Every alarm publishes to one SNS topic. Set `alert_email` to subscribe an address to it, and note that AWS emails a confirmation link that has to be accepted before any alarm is delivered. Left empty, the topic has no subscriber and an alarm reaches nobody.
 
-The ElastiCache and SQS resources the platform profile enables have no consumer. No service is given a Redis endpoint or a queue URL, so both cost money and carry no traffic. The tiles S3 bucket is the same case with one more step: TileTopia's task definition sets `AWS_S3_BUCKET` to the bucket name, and TileTopia reads no such variable, so the bucket stays empty.
+The ElastiCache and SQS resources the platform profile enables have no consumer. No service is given a Redis endpoint or a queue URL, so both cost money and carry no traffic. The tiles S3 bucket is the same case: no service reads or writes it, so it stays empty.
 
 ## Safe apply blockers
 

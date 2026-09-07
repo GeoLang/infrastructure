@@ -329,7 +329,6 @@ module "ecs" {
           { name = "TILETOPIA_HOST", value = "0.0.0.0" },
           { name = "TILETOPIA_DATA_DIR", value = "/data" },
           { name = "RUST_LOG", value = "info,tiletopia=debug" },
-          { name = "AWS_S3_BUCKET", value = var.enable_s3_tiles ? aws_s3_bucket.tiles[0].id : "" },
           { name = "AWS_REGION", value = var.aws_region },
         ]
         secrets = lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [
@@ -791,7 +790,8 @@ module "monitoring" {
   name_prefix      = local.name_prefix
   aws_region       = var.aws_region
   ecs_cluster_name = module.ecs.cluster_name
-  alb_arn_suffix   = module.loadbalancer.alb_dns_name
+  alb_arn_suffix   = module.loadbalancer.alb_arn_suffix
+  alert_email      = var.alert_email
   rds_instance_ids = toset(concat(
     var.enable_database ? [module.database[0].identifier] : [],
     var.enable_database && var.enable_agora ? [module.agora_database[0].identifier] : [],
@@ -857,6 +857,7 @@ module "waf" {
   alb_arn           = module.loadbalancer.alb_arn
   rate_limit        = var.waf_rate_limit
   blocked_countries = var.waf_blocked_countries
+  behind_cloudfront = var.enable_cdn
 
   tags = local.tags
 }

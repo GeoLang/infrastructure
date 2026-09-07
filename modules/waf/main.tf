@@ -13,9 +13,15 @@ variable "alb_arn" {
 }
 
 variable "rate_limit" {
-  description = "Maximum requests per 5-minute period per IP"
+  description = "Maximum requests per 5-minute period per client address"
   type        = number
   default     = 2000
+}
+
+variable "behind_cloudfront" {
+  description = "CloudFront fronts the ALB, so the rate limit keys on the forwarded client address"
+  type        = bool
+  default     = false
 }
 
 variable "blocked_countries" {
@@ -71,7 +77,16 @@ resource "aws_wafv2_web_acl" "main" {
     statement {
       rate_based_statement {
         limit              = var.rate_limit
-        aggregate_key_type = "IP"
+        aggregate_key_type = var.behind_cloudfront ? "FORWARDED_IP" : "IP"
+
+        dynamic "forwarded_ip_config" {
+          for_each = var.behind_cloudfront ? [1] : []
+          content {
+            header_name = "X-Forwarded-For"
+            # MATCH would apply the block action to a request whose header is malformed
+            fallback_behavior = "NO_MATCH"
+          }
+        }
       }
     }
 

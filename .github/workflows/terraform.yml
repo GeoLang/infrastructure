@@ -43,6 +43,21 @@ jobs:
       - name: Validate
         run: terraform validate
 
+  tests:
+    name: Script tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish images
+        run: bash tests/test_publish_images.sh
+
+      - name: Put runtime secret
+        run: bash tests/test_put_runtime_secret.sh
+
+      - name: Refresh database secrets
+        run: python3 tests/test_refresh_database_secrets.py
+
   plan:
     name: Plan
     runs-on: ubuntu-latest

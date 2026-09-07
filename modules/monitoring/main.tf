@@ -31,6 +31,12 @@ variable "rds_instance_ids" {
   default     = []
 }
 
+variable "alert_email" {
+  description = "Email address subscribed to the alerts topic (empty = no subscriber)"
+  type        = string
+  default     = ""
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
@@ -41,6 +47,15 @@ variable "tags" {
 resource "aws_sns_topic" "alerts" {
   name = "${var.name_prefix}-alerts"
   tags = var.tags
+}
+
+# AWS emails a confirmation link and delivers nothing until it is accepted
+resource "aws_sns_topic_subscription" "alerts_email" {
+  count = var.alert_email != "" ? 1 : 0
+
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.alert_email
 }
 
 # ─── ECS Service Health Alarms ────────────────────────────────────────────────

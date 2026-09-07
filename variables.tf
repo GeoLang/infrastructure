@@ -270,6 +270,12 @@ variable "enable_container_insights" {
   default     = true
 }
 
+variable "alert_email" {
+  description = "Email address subscribed to the CloudWatch alerts topic (empty = no subscriber)"
+  type        = string
+  default     = ""
+}
+
 # ─── S3 Storage ──────────────────────────────────────────────────────────────
 
 variable "enable_s3_tiles" {
@@ -326,7 +332,7 @@ variable "enable_waf" {
 }
 
 variable "waf_rate_limit" {
-  description = "WAF rate limit, max requests per 5-minute window per IP"
+  description = "WAF rate limit, max requests per 5-minute window per client address"
   type        = number
   default     = 2000
 }

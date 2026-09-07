@@ -112,3 +112,7 @@ environment  = "prod"      # dev | staging | prod
 
 # log_retention_days        = 30
 # enable_container_insights = true
+
+# Subscribes an address to the alerts topic. AWS emails a confirmation link that
+# has to be accepted before any alarm is delivered.
+# alert_email = "ops@geolang.com"
