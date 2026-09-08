@@ -29,6 +29,12 @@ variable "origin_domain_name" {
   default     = ""
 }
 
+variable "allow_cleartext_origin" {
+  description = "Permit the http-only fallback when no origin hostname is configured"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
@@ -60,10 +66,7 @@ resource "aws_cloudfront_distribution" "main" {
     custom_origin_config {
       http_port  = 80
       https_port = 443
-      # WARNING: the http-only fallback is not fit for production. It sends every
-      # Authorization header, JWT and session cookie from CloudFront to the ALB in
-      # cleartext across the public internet. It exists only so the stack can come
-      # up without a domain. Set domain_name and enable_dns to get https-only.
+      # WARNING: http-only sends every Authorization header, JWT and session cookie to the ALB in cleartext
       origin_protocol_policy = local.origin_is_named ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
     }
@@ -312,6 +315,13 @@ resource "aws_cloudfront_distribution" "main" {
   }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-cdn" })
+
+  lifecycle {
+    precondition {
+      condition     = local.origin_is_named || var.allow_cleartext_origin
+      error_message = "CloudFront would reach the load balancer over plain HTTP, sending Authorization headers and session cookies across the public internet in cleartext. Set domain_name with enable_dns so the origin has a hostname TLS can be checked against, or set allow_cleartext_origin = true for a stack that carries no credentials."
+    }
+  }
 }
 
 # ─── Outputs ──────────────────────────────────────────────────────────────────

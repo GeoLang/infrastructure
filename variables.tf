@@ -140,6 +140,12 @@ variable "enable_cdn" {
   default     = true
 }
 
+variable "allow_cleartext_origin" {
+  description = "Let CloudFront reach the load balancer over plain HTTP when no domain is configured"
+  type        = bool
+  default     = false
+}
+
 # ─── Database (RDS PostGIS) ──────────────────────────────────────────────────
 
 variable "enable_database" {

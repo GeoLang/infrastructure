@@ -197,15 +197,15 @@ CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyt
 
 When `enable_cdn` is true, the load balancer admits only the AWS-managed `com.amazonaws.global.cloudfront.origin-facing` prefix list, so the CDN cannot be bypassed by calling the load balancer name directly. That prefix list counts as 55 of a security group's 60 rules, which leaves room for one port. The admitted port is 443 when a domain is configured, because CloudFront then reaches the origin over HTTPS, and 80 otherwise. Without a CDN the load balancer is the only way in and stays open.
 
-The port 80 case is the shipped default, since `enable_cdn = true` and no domain is set. With no certificate, CloudFront uses `origin_protocol_policy = "http-only"`, so every request it forwards crosses the public internet to the load balancer in cleartext, Authorization headers and session cookies included. The Terraform says so in a comment. Configure a domain and certificate before carrying real credentials.
+The port 80 case is what `enable_cdn = true` with no domain would give you: `origin_protocol_policy = "http-only"`, so every request CloudFront forwards crosses the public internet to the load balancer in cleartext, Authorization headers and session cookies included. The apply now refuses that combination. A precondition on the CloudFront distribution stops the plan unless an origin hostname is configured, and the error names the two ways out: set `domain_name` with `enable_dns`, or set `allow_cleartext_origin = true`, which is only for a stack that carries no credentials.
 
 ## Task network isolation
 
-ECS tasks are split across four security groups.
+ECS tasks are placed in four security groups, plus a fifth the platform proxy and the GeoLang API carry as a second group.
 
 Most services share one group that reaches every other service, the Ptolemy database, and the internet. On the platform profile that group holds twelve tasks: Ptolemy, TileTopia, Geokode, Itinera, Interiora, geoplumb, Fenestra, Sibyl, geodukt, ViewTopia, the platform proxy, and the GeoLang API. The Agora database ingress names only the Agora security group, so the shared group cannot reach it.
 
-Agora has its own group because it listens on the same port the executor's tool calls use. Its ingress admits the whole shared group, so any of those twelve tasks can call it, not only the proxy and the GeoLang API. What the group actually buys is exclusion: the GeoLang executor and Jupyter, the two tasks running user-supplied code, cannot reach Agora at all.
+Agora has its own group because it listens on the same port the executor's tool calls use. Its one ingress rule admits port 3000 from the session callers group, which nothing listens on and which only the platform proxy and the GeoLang API carry, each alongside the shared group. The other ten tasks in the shared group cannot open a connection to Agora, and neither can the GeoLang executor or Jupyter, the two tasks running user-supplied code.
 
 That is a second layer, not the only one. Agora authenticates its own requests. Every route needs a token except `/health`, share-link resolution, and attachment reads, and those last two carry per-document capability tokens.
 

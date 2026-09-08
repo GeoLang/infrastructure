@@ -149,12 +149,38 @@ resource "aws_security_group" "ecs" {
   }
 }
 
+# ─── Session Callers Security Group ──────────────────────────────────────────
+#
+# Carried by the platform proxy and the geolang API alongside the shared ECS
+# group, and named by the agora ingress below. It has no ingress of its own,
+# it exists so agora can admit those two services without admitting every task
+# in the shared group.
+
+resource "aws_security_group" "session_callers" {
+  name_prefix = "${var.name_prefix}-session-callers-"
+  vpc_id      = var.vpc_id
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-session-callers-sg" })
+
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
 # ─── Agora Security Group ────────────────────────────────────────────────────
 #
 # Agora listens on 3000, the same port the executor's tool calls reach in the
-# shared ECS group, and it authenticates nothing that arrives from inside the
-# VPC. Its own group keeps that traffic to the callers that route user requests,
-# the platform proxy and the geolang API, both of which sit in the ECS group.
+# shared ECS group. Agora checks a token on every route except health,
+# share-link resolution and attachment reads, and this group is the check
+# before that one: it admits the session callers group alone, so the rest of
+# the shared group cannot open a connection.
 
 resource "aws_security_group" "agora" {
   name_prefix = "${var.name_prefix}-agora-"
@@ -164,7 +190,7 @@ resource "aws_security_group" "agora" {
     from_port       = 3000
     to_port         = 3000
     protocol        = "tcp"
-    security_groups = [aws_security_group.ecs.id]
+    security_groups = [aws_security_group.session_callers.id]
     description     = "Session traffic from the platform proxy and the geolang API"
   }
 
@@ -419,6 +445,10 @@ output "untrusted_code_security_group_id" {
 
 output "agora_security_group_id" {
   value = aws_security_group.agora.id
+}
+
+output "session_callers_security_group_id" {
+  value = aws_security_group.session_callers.id
 }
 
 output "jupyter_security_group_id" {
