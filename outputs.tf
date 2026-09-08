@@ -118,13 +118,6 @@ output "waf_web_acl_id" {
   value       = var.enable_waf ? module.waf[0].web_acl_id : "WAF disabled"
 }
 
-# ─── ElastiCache ─────────────────────────────────────────────────────────────
-
-output "redis_endpoint" {
-  description = "Redis endpoint URL"
-  value       = var.enable_cache ? module.cache[0].connection_url : "Redis disabled"
-}
-
 # ─── EFS ──────────────────────────────────────────────────────────────────────
 
 output "efs_file_system_id" {
@@ -152,13 +145,6 @@ output "guardduty_detector_id" {
 output "vpc_flow_log_group" {
   description = "VPC Flow Logs CloudWatch log group"
   value       = var.enable_security ? module.security[0].flow_log_group : "Security module disabled"
-}
-
-# ─── SQS Queues ──────────────────────────────────────────────────────────────
-
-output "sqs_queue_urls" {
-  description = "SQS queue URLs for async processing"
-  value       = var.enable_queues ? module.queues[0].queue_urls : {}
 }
 
 # ─── Backup ──────────────────────────────────────────────────────────────────

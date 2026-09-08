@@ -146,14 +146,16 @@ terraform plan -var-file=profiles/platform.tfvars
 
 The first apply must keep `runtime_secrets_ready = false`. It creates the network, databases, EFS access points, ECR repositories, secret containers, task definitions, and zero-count ECS services.
 
-On the platform profile the first apply cannot finish in one pass. The load balancer security group needs the certificate ARN, the certificate needs ACM validation, validation needs the domain's nameservers delegated at the registrar, and the hosted zone that publishes those nameservers is created by the same apply. So the load balancer, and with it every ECS service and target group, cannot be created until delegation exists. The working sequence is:
+On the platform profile the load balancer security group needs the certificate ARN, the certificate needs ACM validation, and validation needs the domain's nameservers delegated at the registrar. Set `existing_hosted_zone_id` to a zone that is already delegated and one apply completes, because validation records go into a zone the registrar already points at.
+
+Without it, the apply creates the zone that publishes those nameservers, so delegation cannot exist yet and the load balancer, every ECS service, and every target group cannot be created. The sequence is then:
 
 1. Apply once. ACM validation eventually times out and the apply fails part way. Everything that does not depend on the certificate is created, including the Route53 zone.
 2. Read `terraform output name_servers`.
 3. Set those nameservers at the domain registrar and wait for the delegation to propagate.
 4. Apply again. Validation completes and the load balancer, target groups, and zero-count services are created.
 
-After that second apply:
+After the apply that creates the load balancer:
 
 1. Run `./scripts/publish-images.sh <image_tag>` to build and push every enabled ECR image.
 2. Stage the required files in EFS.
@@ -260,7 +262,7 @@ The workflow runs all three on every push and pull request.
 
 The load balancer 5xx alarm and the load balancer dashboard widget take the ALB ARN suffix, which is what the `LoadBalancer` metric dimension matches on, so they report alongside the ECS and RDS alarms. Every alarm publishes to one SNS topic. Set `alert_email` to subscribe an address to it, and note that AWS emails a confirmation link that has to be accepted before any alarm is delivered. Left empty, the topic has no subscriber and an alarm reaches nobody.
 
-The ElastiCache and SQS resources the platform profile enables have no consumer. No service is given a Redis endpoint or a queue URL, so both cost money and carry no traffic. The tiles S3 bucket is the same case: no service reads or writes it, so it stays empty.
+The tiles S3 bucket has no consumer. No service reads or writes it, so it stays empty.
 
 ## Safe apply blockers
 
@@ -271,9 +273,8 @@ The infrastructure can be planned before these are resolved, with all services h
 - EFS spatial, coverage, and GeoLang Natural Earth data must be staged.
 - All required secret containers must have a current value.
 - DNS delegation and ACM validation must complete when the platform profile uses `geolang.com`.
-- The RDS engine version is pinned to `16.4`, released in August 2024. Verify that minor is still offered in the target region before applying, since RDS drops old minors and the instance create fails if it is gone.
-- GuardDuty is created unconditionally. `aws_guardduty_detector` fails if the account already has a detector in that region.
-- The Route53 zone is created unconditionally. If the domain already has a hosted zone, this makes a second one with different nameservers, and ACM validation never resolves because the registrar points at the old zone.
+- Set `enable_guardduty = false` when the account already has a detector in the deployment region. `aws_guardduty_detector` fails against an account that already has one.
+- Set `existing_hosted_zone_id` when the domain already has a hosted zone. Left empty, the apply creates a second zone with different nameservers, and ACM validation never resolves because the registrar points at the old zone.
 - The S3 backend is commented out. `terraform init` in CI runs against empty state, so the workflow's manual plan job always reports that it will create everything. It cannot serve as the pre-apply review described above.
 - The load balancer security group assumes the CloudFront managed prefix list counts 55 of its 60 rules. AWS raises that list's `MaxEntries` over time, and at 60 the security group create fails.
 

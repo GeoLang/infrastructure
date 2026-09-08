@@ -137,10 +137,6 @@ enable_bastion = true
 enable_waf     = true
 waf_rate_limit = 2000
 
-# ── ElastiCache (Redis) ─────────────────────────────────────────
-enable_cache    = true
-cache_node_type = "cache.t4g.micro"
-
 # ── EFS (Shared Storage) ────────────────────────────────────────
 enable_efs = true
 
@@ -153,9 +149,6 @@ runtime_secrets_ready = false
 # ── Security (GuardDuty + VPC Flow Logs) ─────────────────────────
 enable_security  = true
 enable_guardduty = true
-
-# ── SQS Queues ──────────────────────────────────────────────────
-enable_queues = true
 
 # ── Backup & DR ─────────────────────────────────────────────────
 enable_backup              = true

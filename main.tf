@@ -769,8 +769,9 @@ module "dns" {
     aws.regional = aws
   }
 
-  name_prefix = local.name_prefix
-  domain_name = var.domain_name
+  name_prefix             = local.name_prefix
+  domain_name             = var.domain_name
+  existing_hosted_zone_id = var.existing_hosted_zone_id
 
   cloudfront_domain_name    = var.enable_cdn ? module.cdn[0].domain_name : ""
   cloudfront_hosted_zone_id = var.enable_cdn ? module.cdn[0].hosted_zone_id : ""
@@ -863,23 +864,6 @@ module "waf" {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ELASTICACHE (Redis)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-module "cache" {
-  source = "./modules/cache"
-  count  = var.enable_cache ? 1 : 0
-
-  name_prefix           = local.name_prefix
-  vpc_id                = module.networking.vpc_id
-  private_subnet_ids    = module.networking.private_subnet_ids
-  ecs_security_group_id = module.loadbalancer.ecs_security_group_id
-  node_type             = var.cache_node_type
-
-  tags = local.tags
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
 # EFS (Shared Persistent Storage)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -926,19 +910,6 @@ module "security" {
   vpc_id             = module.networking.vpc_id
   log_retention_days = 90
   enable_guardduty   = var.enable_guardduty
-
-  tags = local.tags
-}
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# SQS QUEUES (Async Processing)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-module "queues" {
-  source = "./modules/queues"
-  count  = var.enable_queues ? 1 : 0
-
-  name_prefix = local.name_prefix
 
   tags = local.tags
 }

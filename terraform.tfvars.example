@@ -20,6 +20,10 @@ environment  = "prod"      # dev | staging | prod
 # enable_dns  = true
 # domain_name = "geolang.com"
 
+# Set this when the domain already has a delegated hosted zone, so the first
+# apply reuses it instead of creating a second zone with different nameservers.
+# existing_hosted_zone_id = "Z0123456789ABCDEFGHIJ"
+
 # ─── Database ────────────────────────────────────────────────────────────────
 # RDS manages its master password in Secrets Manager. Runtime database URLs and
 # application credentials must be populated outside Terraform. See README.md.

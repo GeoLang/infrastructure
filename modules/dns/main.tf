@@ -25,6 +25,12 @@ variable "domain_name" {
   type        = string
 }
 
+variable "existing_hosted_zone_id" {
+  description = "Zone ID of an existing hosted zone for this domain, empty creates a new zone"
+  type        = string
+  default     = ""
+}
+
 variable "cloudfront_domain_name" {
   description = "CloudFront distribution domain for alias record"
   type        = string
@@ -56,9 +62,20 @@ variable "tags" {
 
 # ─── Route53 Hosted Zone ─────────────────────────────────────────────────────
 
+data "aws_route53_zone" "existing" {
+  count   = var.existing_hosted_zone_id != "" ? 1 : 0
+  zone_id = var.existing_hosted_zone_id
+}
+
 resource "aws_route53_zone" "main" {
-  name = var.domain_name
-  tags = merge(var.tags, { Name = var.domain_name })
+  count = var.existing_hosted_zone_id != "" ? 0 : 1
+  name  = var.domain_name
+  tags  = merge(var.tags, { Name = var.domain_name })
+}
+
+locals {
+  zone_id      = var.existing_hosted_zone_id != "" ? data.aws_route53_zone.existing[0].zone_id : aws_route53_zone.main[0].zone_id
+  name_servers = var.existing_hosted_zone_id != "" ? data.aws_route53_zone.existing[0].name_servers : aws_route53_zone.main[0].name_servers
 }
 
 # ─── ACM Certificate ─────────────────────────────────────────────────────────
@@ -92,7 +109,7 @@ resource "aws_route53_record" "cert_validation" {
   records         = [each.value.record]
   ttl             = 60
   type            = each.value.type
-  zone_id         = aws_route53_zone.main.zone_id
+  zone_id         = local.zone_id
 }
 
 resource "aws_acm_certificate_validation" "main" {
@@ -131,7 +148,7 @@ resource "aws_acm_certificate_validation" "alb" {
 # name we control so the CloudFront-to-ALB hop can be TLS instead of cleartext.
 
 resource "aws_route53_record" "origin" {
-  zone_id = aws_route53_zone.main.zone_id
+  zone_id = local.zone_id
   name    = "origin.${var.domain_name}"
   type    = "A"
 
@@ -145,7 +162,7 @@ resource "aws_route53_record" "origin" {
 # ─── A Record → CloudFront or ALB ────────────────────────────────────────────
 
 resource "aws_route53_record" "root" {
-  zone_id = aws_route53_zone.main.zone_id
+  zone_id = local.zone_id
   name    = var.domain_name
   type    = "A"
 
@@ -158,7 +175,7 @@ resource "aws_route53_record" "root" {
 
 # www redirect
 resource "aws_route53_record" "www" {
-  zone_id = aws_route53_zone.main.zone_id
+  zone_id = local.zone_id
   name    = "www.${var.domain_name}"
   type    = "A"
 
@@ -173,12 +190,12 @@ resource "aws_route53_record" "www" {
 
 output "zone_id" {
   description = "Route53 hosted zone ID"
-  value       = aws_route53_zone.main.zone_id
+  value       = local.zone_id
 }
 
 output "name_servers" {
   description = "Route53 name servers (set these at your domain registrar)"
-  value       = aws_route53_zone.main.name_servers
+  value       = local.name_servers
 }
 
 output "certificate_arn" {

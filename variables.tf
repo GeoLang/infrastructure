@@ -42,6 +42,12 @@ variable "enable_dns" {
   default     = false
 }
 
+variable "existing_hosted_zone_id" {
+  description = "Zone ID of an existing hosted zone for domain_name, empty creates a new zone"
+  type        = string
+  default     = ""
+}
+
 # ─── Service Toggles ─────────────────────────────────────────────────────────
 
 variable "enable_ptolemy" {
@@ -343,20 +349,6 @@ variable "waf_blocked_countries" {
   default     = []
 }
 
-# ─── ElastiCache (Redis) ─────────────────────────────────────────────────────
-
-variable "enable_cache" {
-  description = "Deploy ElastiCache Redis for caching"
-  type        = bool
-  default     = false
-}
-
-variable "cache_node_type" {
-  description = "ElastiCache node type"
-  type        = string
-  default     = "cache.t4g.micro"
-}
-
 # ─── EFS Storage ─────────────────────────────────────────────────────────────
 
 variable "enable_efs" {
@@ -385,14 +377,6 @@ variable "enable_guardduty" {
   description = "Enable GuardDuty (within security module)"
   type        = bool
   default     = true
-}
-
-# ─── SQS Queues ──────────────────────────────────────────────────────────────
-
-variable "enable_queues" {
-  description = "Deploy SQS queues for async processing"
-  type        = bool
-  default     = false
 }
 
 # ─── Backup ──────────────────────────────────────────────────────────────────
