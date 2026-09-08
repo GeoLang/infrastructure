@@ -61,6 +61,8 @@ variable "services" {
     dropped_capabilities     = optional(list(string), [])
     runs_untrusted_code      = optional(bool, false)
     security_group_id        = optional(string)
+    # extra groups the task carries so another service's ingress can name it
+    additional_security_group_ids = optional(list(string), [])
     mount_points = optional(list(object({
       source_volume  = string
       container_path = string
@@ -425,7 +427,7 @@ resource "aws_ecs_service" "services" {
 
   network_configuration {
     subnets          = var.private_subnet_ids
-    security_groups  = [local.service_security_group_ids[each.key]]
+    security_groups  = concat([local.service_security_group_ids[each.key]], each.value.additional_security_group_ids)
     assign_public_ip = false
   }
 

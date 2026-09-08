@@ -112,6 +112,10 @@ environment  = "prod"      # dev | staging | prod
 
 # enable_cdn = true   # CloudFront for tile caching at edge
 
+# With the CDN on and no domain_name, CloudFront reaches the load balancer over
+# plain HTTP and the apply stops. Set this only for a stack with no credentials.
+# allow_cleartext_origin = false
+
 # ─── Monitoring ──────────────────────────────────────────────────────────────
 
 # log_retention_days        = 30

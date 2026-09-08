@@ -577,12 +577,13 @@ module "ecs" {
 
     var.enable_geolang ? {
       geolang-api = {
-        image          = local.service_images["geolang-api"]
-        cpu            = local.service_sizing["geolang-api"].cpu
-        memory         = local.service_sizing["geolang-api"].memory
-        desired_count  = var.runtime_secrets_ready ? local.service_sizing["geolang-api"].desired_count : 0
-        container_port = 8080
-        health_path    = "/health"
+        image                         = local.service_images["geolang-api"]
+        cpu                           = local.service_sizing["geolang-api"].cpu
+        memory                        = local.service_sizing["geolang-api"].memory
+        desired_count                 = var.runtime_secrets_ready ? local.service_sizing["geolang-api"].desired_count : 0
+        container_port                = 8080
+        health_path                   = "/health"
+        additional_security_group_ids = [module.loadbalancer.session_callers_security_group_id]
         environment = concat(
           [
             { name = "CORS_ORIGINS", value = local.platform_origin },
@@ -666,14 +667,15 @@ module "ecs" {
 
     var.enable_platform_proxy ? {
       platform-proxy = {
-        image          = local.service_images["platform-proxy"]
-        cpu            = local.service_sizing["platform-proxy"].cpu
-        memory         = local.service_sizing["platform-proxy"].memory
-        desired_count  = var.runtime_secrets_ready ? local.service_sizing["platform-proxy"].desired_count : 0
-        container_port = 8080
-        health_path    = "/health"
-        health_command = ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
-        public         = true
+        image                         = local.service_images["platform-proxy"]
+        cpu                           = local.service_sizing["platform-proxy"].cpu
+        memory                        = local.service_sizing["platform-proxy"].memory
+        desired_count                 = var.runtime_secrets_ready ? local.service_sizing["platform-proxy"].desired_count : 0
+        container_port                = 8080
+        health_path                   = "/health"
+        health_command                = ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/health || exit 1"]
+        public                        = true
+        additional_security_group_ids = [module.loadbalancer.session_callers_security_group_id]
         environment = concat(
           [{ name = "SERVICE_DISCOVERY_NAMESPACE", value = local.sd_suffix }],
           [for gate, enabled in local.proxy_route_gates : { name = gate, value = tostring(enabled) }],
@@ -752,8 +754,9 @@ module "cdn" {
   # modules do not have to depend on each other in both directions
   origin_domain_name = var.enable_dns && var.domain_name != "" ? "origin.${var.domain_name}" : ""
 
-  certificate_arn = var.enable_dns && var.domain_name != "" ? module.dns[0].certificate_arn : ""
-  tags            = local.tags
+  certificate_arn        = var.enable_dns && var.domain_name != "" ? module.dns[0].certificate_arn : ""
+  allow_cleartext_origin = var.allow_cleartext_origin
+  tags                   = local.tags
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
