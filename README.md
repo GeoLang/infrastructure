@@ -1,6 +1,8 @@
 # GeoLang AWS infrastructure
 
-This Terraform stack deploys the GeoLang platform to AWS. The full profile matches the current ViewTopia platform compose path for the flagship viewer, collaboration, notebook, and agent workflows.
+This Terraform stack defines the GeoLang platform on AWS. The full profile matches the current ViewTopia platform compose path for the flagship viewer, collaboration, notebook, and agent workflows.
+
+Nothing here has ever been applied. `terraform validate` passes and the script tests run on every push, but no AWS account holds these resources, so every sequence below is written from the configuration rather than from a run.
 
 Terraform does not build images, populate secret values, load spatial data, create application users, or run database migrations itself. ECS services start at a desired count of zero until `runtime_secrets_ready` is set to `true`.
 
@@ -233,7 +235,7 @@ terraform init -backend=false
 terraform validate
 ```
 
-The GitHub workflow runs the same format and validation checks with Terraform 1.15.8, since `fmt` output tracks the toolchain version. Its manual plan job needs AWS credentials because `terraform plan` reads account and region data sources. No runtime application credential is passed to Terraform.
+The GitHub workflow runs the same format and validation checks with Terraform 1.15.8, since `fmt` output tracks the toolchain version. Its manual plan job needs AWS credentials because `terraform plan` reads account and region data sources. It takes a long-lived access key pair from the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets, not an OIDC role that mints a short-lived one. No runtime application credential is passed to Terraform.
 
 The two shell commands and the refresh Lambda have their own tests, which stub the AWS CLI, Docker, and Terraform and so contact nothing:
 
