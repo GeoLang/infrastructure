@@ -162,8 +162,9 @@ resource "aws_rds_cluster_parameter_group" "postgis" {
 
   # hosted database URLs need verify-full and the AWS RDS CA bundle
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
   }
 
   tags = var.tags

@@ -65,7 +65,7 @@ nightly_scale_down = {
 }
 
 # Populate secrets and push the two ECR images before changing this to true.
-runtime_secrets_ready = false
+runtime_secrets_ready = true
 
 # ── Images ───────────────────────────────────────────────────────
 # Everything already published to ghcr comes from there. Only viewtopia and the

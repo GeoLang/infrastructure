@@ -325,6 +325,7 @@ resource "aws_ecs_task_definition" "services" {
     }]
     linuxParameters = length(each.value.dropped_capabilities) > 0 ? {
       capabilities = {
+        add  = []
         drop = each.value.dropped_capabilities
       }
     } : null
