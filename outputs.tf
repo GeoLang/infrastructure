@@ -35,23 +35,13 @@ output "ecr_repositories" {
 # ─── Database ────────────────────────────────────────────────────────────────
 
 output "database_endpoint" {
-  description = "Ptolemy RDS PostgreSQL endpoint"
+  description = "Aurora writer endpoint"
   value       = var.enable_database ? module.database[0].endpoint : "Database disabled"
 }
 
 output "database_master_user_secret_arn" {
-  description = "Ptolemy RDS managed master credential secret ARN"
+  description = "Aurora managed master credential secret ARN"
   value       = var.enable_database ? module.database[0].master_user_secret_arn : "Database disabled"
-}
-
-output "agora_database_endpoint" {
-  description = "Agora RDS PostgreSQL endpoint"
-  value       = var.enable_database && var.enable_agora ? module.agora_database[0].endpoint : "Agora database disabled"
-}
-
-output "agora_database_master_user_secret_arn" {
-  description = "Agora RDS managed master credential secret ARN"
-  value       = var.enable_database && var.enable_agora ? module.agora_database[0].master_user_secret_arn : "Agora database disabled"
 }
 
 # ─── DNS ──────────────────────────────────────────────────────────────────────

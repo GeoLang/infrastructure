@@ -50,6 +50,18 @@ class FakeSecretsClient:
         self.stage_calls.append(kwargs)
 
 
+class FakeRdsDataClient:
+    def __init__(self, records=None):
+        self.records = [] if records is None else records
+        self.calls = []
+
+    def execute_statement(self, **kwargs):
+        self.calls.append(kwargs)
+        if kwargs["sql"].startswith("SELECT"):
+            return {"records": self.records}
+        return {}
+
+
 class FakeWaiter:
     def __init__(self):
         self.calls = []
@@ -82,8 +94,25 @@ def target():
         "host": "database.example.internal",
         "port": 5432,
         "database_name": "ptolemy",
+        "cluster_arn": "",
+        "admin_database": "",
         "cluster_name": "geolang-prod",
         "service_name": "geolang-prod-ptolemy",
+    }
+
+
+def agora_target(database_name="agora"):
+    return {
+        "name": "agora",
+        "source_secret_arn": "source-secret",
+        "target_secret_arn": "target-secret",
+        "host": "database.example.internal",
+        "port": 5432,
+        "database_name": database_name,
+        "cluster_arn": "arn:aws:rds:us-west-2:000152811496:cluster:geolang-prod-postgis",
+        "admin_database": "ptolemy",
+        "cluster_name": "geolang-prod",
+        "service_name": "geolang-prod-agora",
     }
 
 
@@ -111,6 +140,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
                 target(),
                 secrets_client,
                 FakeEcsClient(),
+                FakeRdsDataClient(),
             )
 
     def test_unchanged_target_does_not_write_or_restart(self):
@@ -131,6 +161,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             target(),
             secrets_client,
             ecs_client,
+            FakeRdsDataClient(),
         )
 
         self.assertEqual(result, {"name": "ptolemy", "changed": False})
@@ -149,6 +180,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             target(),
             secrets_client,
             ecs_client,
+            FakeRdsDataClient(),
         )
 
         self.assertEqual(result, {"name": "ptolemy", "changed": True})
@@ -182,6 +214,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             target(),
             secrets_client,
             ecs_client,
+            FakeRdsDataClient(),
         )
 
         self.assertEqual(result, {"name": "ptolemy", "changed": True})
@@ -202,6 +235,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
                 target(),
                 secrets_client,
                 ecs_client,
+                FakeRdsDataClient(),
             )
 
         self.assertEqual(
@@ -227,6 +261,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
                 target(),
                 secrets_client,
                 ecs_client,
+                FakeRdsDataClient(),
             )
 
         self.assertEqual(
@@ -238,6 +273,84 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             }],
         )
         self.assertEqual(ecs_client.waiter.calls, [])
+
+    def test_absent_database_is_created(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "password"}),
+            target_missing=True,
+        )
+        rds_data_client = FakeRdsDataClient(records=[])
+
+        REFRESH_DATABASE_SECRETS.refresh_database_secret(
+            agora_target(),
+            secrets_client,
+            FakeEcsClient(),
+            rds_data_client,
+        )
+
+        self.assertEqual(len(rds_data_client.calls), 2)
+        self.assertEqual(
+            rds_data_client.calls[0],
+            {
+                "resourceArn": "arn:aws:rds:us-west-2:000152811496:cluster:geolang-prod-postgis",
+                "secretArn": "source-secret",
+                "database": "ptolemy",
+                "sql": "SELECT 1 FROM pg_database WHERE datname = :name",
+                "parameters": [{"name": "name", "value": {"stringValue": "agora"}}],
+            },
+        )
+        self.assertEqual(rds_data_client.calls[1]["sql"], 'CREATE DATABASE "agora"')
+
+    def test_existing_database_is_not_created(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "password"}),
+            target_missing=True,
+        )
+        rds_data_client = FakeRdsDataClient(records=[[{"longValue": 1}]])
+
+        REFRESH_DATABASE_SECRETS.refresh_database_secret(
+            agora_target(),
+            secrets_client,
+            FakeEcsClient(),
+            rds_data_client,
+        )
+
+        self.assertEqual(len(rds_data_client.calls), 1)
+        self.assertEqual(len(secrets_client.put_calls), 1)
+
+    def test_populated_target_never_reaches_the_data_api(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "password"}),
+            target_value="postgres://old-value",
+        )
+        rds_data_client = FakeRdsDataClient(records=[])
+
+        REFRESH_DATABASE_SECRETS.refresh_database_secret(
+            agora_target(),
+            secrets_client,
+            FakeEcsClient(),
+            rds_data_client,
+        )
+
+        self.assertEqual(rds_data_client.calls, [])
+
+    def test_invalid_database_name_is_refused(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "password"}),
+            target_missing=True,
+        )
+        rds_data_client = FakeRdsDataClient(records=[])
+
+        with self.assertRaisesRegex(ValueError, "database name must match"):
+            REFRESH_DATABASE_SECRETS.refresh_database_secret(
+                agora_target(database_name='agora"; DROP DATABASE ptolemy'),
+                secrets_client,
+                FakeEcsClient(),
+                rds_data_client,
+            )
+
+        self.assertEqual(rds_data_client.calls, [])
+        self.assertEqual(secrets_client.put_calls, [])
 
 
 if __name__ == "__main__":

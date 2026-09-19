@@ -1,6 +1,7 @@
 locals {
   database_secret_refresh_enabled = var.enable_database && var.enable_database_secret_refresh && (var.enable_ptolemy || var.enable_agora)
 
+  # ptolemy owns the cluster's default database, so only agora needs one created
   database_secret_refresh_targets = merge(
     var.enable_database && var.enable_ptolemy ? {
       ptolemy = {
@@ -10,6 +11,8 @@ locals {
         host              = module.database[0].address
         port              = module.database[0].port
         database_name     = var.db_name
+        cluster_arn       = ""
+        admin_database    = ""
         cluster_name      = module.ecs.cluster_name
         service_name      = module.ecs.service_names["ptolemy"]
       }
@@ -17,11 +20,13 @@ locals {
     var.enable_database && var.enable_agora ? {
       agora = {
         name              = "agora"
-        source_secret_arn = module.agora_database[0].master_user_secret_arn
+        source_secret_arn = module.database[0].master_user_secret_arn
         target_secret_arn = lookup(local.runtime_secret_arns, "agora_database_url", "")
-        host              = module.agora_database[0].address
-        port              = module.agora_database[0].port
+        host              = module.database[0].address
+        port              = module.database[0].port
         database_name     = "agora"
+        cluster_arn       = module.database[0].arn
+        admin_database    = var.db_name
         cluster_name      = module.ecs.cluster_name
         service_name      = module.ecs.service_names["agora"]
       }
@@ -36,18 +41,18 @@ locals {
     for target in values(local.database_secret_refresh_targets) : target.target_secret_arn
   ])
 
+  database_secret_refresh_cluster_arns = distinct(compact([
+    for target in values(local.database_secret_refresh_targets) : target.cluster_arn
+  ]))
+
   database_secret_refresh_service_arns = [
-    for target in values(local.database_secret_refresh_targets) : "arn:${data.aws_partition.current[0].partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current[0].account_id}:service/${target.cluster_name}/${target.service_name}"
+    for target in values(local.database_secret_refresh_targets) : "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${target.cluster_name}/${target.service_name}"
   ]
 }
 
-data "aws_caller_identity" "current" {
-  count = local.database_secret_refresh_enabled ? 1 : 0
-}
+data "aws_caller_identity" "current" {}
 
-data "aws_partition" "current" {
-  count = local.database_secret_refresh_enabled ? 1 : 0
-}
+data "aws_partition" "current" {}
 
 resource "terraform_data" "database_secret_refresh" {
   count = local.database_secret_refresh_enabled ? 1 : 0
@@ -115,7 +120,7 @@ resource "aws_iam_role_policy" "database_secret_refresh" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
@@ -147,7 +152,12 @@ resource "aws_iam_role_policy" "database_secret_refresh" {
         ]
         Resource = "${aws_cloudwatch_log_group.database_secret_refresh[0].arn}:*"
       },
-    ]
+      ],
+      length(local.database_secret_refresh_cluster_arns) > 0 ? [{
+        Effect   = "Allow"
+        Action   = ["rds-data:ExecuteStatement"]
+        Resource = local.database_secret_refresh_cluster_arns
+    }] : [])
   })
 }
 
@@ -193,10 +203,10 @@ resource "aws_iam_role" "database_secret_refresh_scheduler" {
       Principal = { Service = "scheduler.amazonaws.com" }
       Condition = {
         StringEquals = {
-          "aws:SourceAccount" = data.aws_caller_identity.current[0].account_id
+          "aws:SourceAccount" = data.aws_caller_identity.current.account_id
         }
         ArnEquals = {
-          "aws:SourceArn" = "arn:${data.aws_partition.current[0].partition}:scheduler:${var.aws_region}:${data.aws_caller_identity.current[0].account_id}:schedule-group/default"
+          "aws:SourceArn" = "arn:${data.aws_partition.current.partition}:scheduler:${var.aws_region}:${data.aws_caller_identity.current.account_id}:schedule-group/default"
         }
       }
     }]

@@ -1,10 +1,10 @@
 # GeoLang Infrastructure — Provider Requirements
 #
-# Terraform >= 1.5 required for check blocks and import blocks.
+# Terraform >= 1.10 required for S3 state locking without DynamoDB.
 # AWS provider ~> 5.0 for latest ECS/RDS features.
 
 terraform {
-  required_version = ">= 1.5"
+  required_version = ">= 1.10"
 
   required_providers {
     aws = {
@@ -17,14 +17,13 @@ terraform {
     }
   }
 
-  # Uncomment for remote state (recommended for team use):
-  # backend "s3" {
-  #   bucket         = "geolang-terraform-state"
-  #   key            = "infrastructure/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "geolang-terraform-locks"
-  #   encrypt        = true
-  # }
+  backend "s3" {
+    bucket       = "geolang-terraform-state-000152811496"
+    key          = "infrastructure/terraform.tfstate"
+    region       = "us-west-2"
+    use_lockfile = true
+    encrypt      = true
+  }
 }
 
 provider "aws" {

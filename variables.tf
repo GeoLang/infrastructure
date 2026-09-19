@@ -152,10 +152,10 @@ variable "allow_cleartext_origin" {
   default     = false
 }
 
-# ─── Database (RDS PostGIS) ──────────────────────────────────────────────────
+# ─── Database (Aurora PostgreSQL Serverless v2) ──────────────────────────────
 
 variable "enable_database" {
-  description = "Deploy RDS PostgreSQL with PostGIS"
+  description = "Deploy the Aurora PostgreSQL cluster"
   type        = bool
   default     = true
 }
@@ -166,16 +166,10 @@ variable "enable_database_secret_refresh" {
   default     = true
 }
 
-variable "db_instance_class" {
-  description = "RDS instance class"
-  type        = string
-  default     = "db.t4g.micro"
-}
-
-variable "db_allocated_storage" {
-  description = "RDS allocated storage in GB"
+variable "db_max_capacity" {
+  description = "Aurora Serverless v2 maximum capacity in ACUs"
   type        = number
-  default     = 20
+  default     = 2
 }
 
 variable "db_name" {
@@ -190,13 +184,27 @@ variable "db_username" {
   default     = "ptolemy"
 }
 
-variable "db_multi_az" {
-  description = "Enable Multi-AZ for RDS (production HA)"
-  type        = bool
-  default     = false
+# ─── ECS / Fargate Sizing ────────────────────────────────────────────────────
+
+variable "nightly_scale_down" {
+  description = "Stop every ECS service daily at this local hour"
+  type = object({
+    timezone = string
+    hour     = number
+  })
+  default = null
+
+  validation {
+    condition     = var.nightly_scale_down == null ? true : var.nightly_scale_down.hour >= 0 && var.nightly_scale_down.hour <= 23
+    error_message = "nightly_scale_down.hour must be between 0 and 23."
+  }
 }
 
-# ─── ECS / Fargate Sizing ────────────────────────────────────────────────────
+variable "use_fargate_spot" {
+  description = "Run every ECS task on Fargate Spot"
+  type        = bool
+  default     = true
+}
 
 variable "service_defaults" {
   description = "Default Fargate task sizing for all services"
@@ -234,6 +242,18 @@ variable "container_images" {
   description = "Docker image URIs per service (leave empty to use ECR defaults)"
   type        = map(string)
   default     = {}
+}
+
+variable "llm_api_base" {
+  description = "OpenAI-compatible base URL passed to Sibyl as SIBYL_CLOUD_API_BASE"
+  type        = string
+  default     = ""
+}
+
+variable "llm_models" {
+  description = "Model identifiers passed to Sibyl as SIBYL_CLOUD_MODELS"
+  type        = string
+  default     = ""
 }
 
 variable "jupyter_image" {

@@ -1,7 +1,7 @@
-# GeoLang Infrastructure - Database Module (RDS PostGIS)
+# GeoLang Infrastructure - Database Module (Aurora PostgreSQL Serverless v2)
 #
-# Provisions an RDS PostgreSQL instance with PostGIS extensions.
-# Uses private subnets with no public access.
+# One Aurora PostgreSQL cluster with a single serverless writer that scales to
+# zero. Private subnets, no public access.
 
 variable "name_prefix" {
   type = string
@@ -15,19 +15,15 @@ variable "private_subnet_ids" {
   type = list(string)
 }
 
-variable "ecs_security_group_id" {
-  description = "Security group of ECS tasks that need DB access"
-  type        = string
+variable "client_security_group_ids" {
+  description = "Security groups of tasks that need database access"
+  type        = list(string)
 }
 
-variable "instance_class" {
-  type    = string
-  default = "db.t4g.micro"
-}
-
-variable "allocated_storage" {
-  type    = number
-  default = 20
+variable "max_capacity" {
+  description = "Aurora Serverless v2 maximum capacity in ACUs"
+  type        = number
+  default     = 2
 }
 
 variable "db_name" {
@@ -38,11 +34,6 @@ variable "db_name" {
 variable "db_username" {
   type    = string
   default = "ptolemy"
-}
-
-variable "multi_az" {
-  type    = bool
-  default = false
 }
 
 variable "bastion_security_group_id" {
@@ -71,13 +62,15 @@ resource "aws_security_group" "rds" {
   name_prefix = "${var.name_prefix}-rds-"
   vpc_id      = var.vpc_id
 
-  # Only allow PostgreSQL from ECS tasks
-  ingress {
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [var.ecs_security_group_id]
-    description     = "PostgreSQL from ECS tasks"
+  dynamic "ingress" {
+    for_each = length(var.client_security_group_ids) > 0 ? [1] : []
+    content {
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = var.client_security_group_ids
+      description     = "PostgreSQL from platform tasks"
+    }
   }
 
   # Allow PostgreSQL from bastion host (when enabled)
@@ -106,50 +99,65 @@ resource "aws_security_group" "rds" {
   }
 }
 
-# ─── RDS Instance ────────────────────────────────────────────────────────────
+# ─── Aurora Cluster ──────────────────────────────────────────────────────────
 
-resource "aws_db_instance" "main" {
-  identifier = "${var.name_prefix}-postgis"
+resource "aws_rds_cluster" "main" {
+  cluster_identifier = "${var.name_prefix}-postgis"
 
-  engine                     = "postgres"
-  engine_version             = "16"
-  auto_minor_version_upgrade = true
-  instance_class             = var.instance_class
+  engine         = "aurora-postgresql"
+  engine_version = "17.10"
+  engine_mode    = "provisioned"
 
-  allocated_storage     = var.allocated_storage
-  max_allocated_storage = var.allocated_storage * 2
-  storage_type          = "gp3"
-  storage_encrypted     = true
+  serverlessv2_scaling_configuration {
+    min_capacity             = 0
+    max_capacity             = var.max_capacity
+    seconds_until_auto_pause = 300
+  }
 
-  db_name                     = var.db_name
-  username                    = var.db_username
+  database_name               = var.db_name
+  master_username             = var.db_username
   manage_master_user_password = true
 
-  multi_az               = var.multi_az
-  db_subnet_group_name   = aws_db_subnet_group.main.name
-  vpc_security_group_ids = [aws_security_group.rds.id]
+  storage_encrypted = true
+  # the refresh lambda creates the agora database through the Data API
+  enable_http_endpoint = true
 
-  publicly_accessible     = false
+  db_subnet_group_name            = aws_db_subnet_group.main.name
+  vpc_security_group_ids          = [aws_security_group.rds.id]
+  db_cluster_parameter_group_name = aws_rds_cluster_parameter_group.postgis.name
+
+  backup_retention_period = 7
   skip_final_snapshot     = true
   deletion_protection     = false
   copy_tags_to_snapshot   = true
-  backup_retention_period = 7
-
-  # PostGIS extensions are available on standard PostgreSQL engine
-  parameter_group_name = aws_db_parameter_group.postgis.name
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-postgis" })
 }
 
+resource "aws_rds_cluster_instance" "main" {
+  identifier         = "${var.name_prefix}-postgis-1"
+  cluster_identifier = aws_rds_cluster.main.id
+
+  instance_class = "db.serverless"
+  engine         = aws_rds_cluster.main.engine
+  engine_version = aws_rds_cluster.main.engine_version
+
+  publicly_accessible        = false
+  auto_minor_version_upgrade = true
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-postgis-1" })
+}
+
 # ─── Parameter Group ─────────────────────────────────────────────────────────
 
-resource "aws_db_parameter_group" "postgis" {
+resource "aws_rds_cluster_parameter_group" "postgis" {
   name_prefix = "${var.name_prefix}-postgis-"
-  family      = "postgres16"
+  family      = "aurora-postgresql17"
 
   parameter {
-    name  = "shared_preload_libraries"
-    value = "pg_stat_statements"
+    name         = "shared_preload_libraries"
+    value        = "pg_stat_statements"
+    apply_method = "pending-reboot"
   }
 
   # hosted database URLs need verify-full and the AWS RDS CA bundle
@@ -168,36 +176,41 @@ resource "aws_db_parameter_group" "postgis" {
 # ─── Outputs ──────────────────────────────────────────────────────────────────
 
 output "endpoint" {
-  description = "RDS endpoint"
-  value       = aws_db_instance.main.endpoint
+  description = "Aurora writer endpoint"
+  value       = aws_rds_cluster.main.endpoint
 }
 
 output "identifier" {
-  description = "RDS instance identifier"
-  value       = aws_db_instance.main.identifier
+  description = "Aurora cluster identifier"
+  value       = aws_rds_cluster.main.id
+}
+
+output "instance_identifier" {
+  description = "Aurora writer instance identifier"
+  value       = aws_rds_cluster_instance.main.identifier
 }
 
 output "arn" {
-  description = "RDS instance ARN"
-  value       = aws_db_instance.main.arn
+  description = "Aurora cluster ARN"
+  value       = aws_rds_cluster.main.arn
 }
 
 output "address" {
-  description = "RDS hostname"
-  value       = aws_db_instance.main.address
+  description = "Aurora writer hostname"
+  value       = aws_rds_cluster.main.endpoint
 }
 
 output "port" {
-  description = "RDS port"
-  value       = aws_db_instance.main.port
+  description = "Aurora port"
+  value       = aws_rds_cluster.main.port
 }
 
 output "master_user_secret_arn" {
   description = "RDS-managed master credential secret ARN"
-  value       = aws_db_instance.main.master_user_secret[0].secret_arn
+  value       = aws_rds_cluster.main.master_user_secret[0].secret_arn
 }
 
 output "security_group_id" {
-  description = "RDS security group ID"
+  description = "Aurora security group ID"
   value       = aws_security_group.rds.id
 }

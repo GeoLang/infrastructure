@@ -1,7 +1,7 @@
 # GeoLang Infrastructure — Networking Module
 #
 # Creates VPC, subnets (public + private), Internet Gateway,
-# NAT Gateway, and route tables for the platform.
+# and route tables for the platform.
 
 variable "name_prefix" {
   description = "Resource name prefix"
@@ -56,7 +56,7 @@ resource "aws_subnet" "public" {
   })
 }
 
-# ─── Private Subnets (for ECS tasks + RDS) ───────────────────────────────────
+# ─── Private Subnets (for Aurora and EFS mount targets) ──────────────────────
 
 resource "aws_subnet" "private" {
   count = var.az_count
@@ -78,22 +78,6 @@ resource "aws_internet_gateway" "main" {
   tags   = merge(var.tags, { Name = "${var.name_prefix}-igw" })
 }
 
-# ─── NAT Gateway (single, for cost savings in demo tier) ─────────────────────
-
-resource "aws_eip" "nat" {
-  domain = "vpc"
-  tags   = merge(var.tags, { Name = "${var.name_prefix}-nat-eip" })
-}
-
-resource "aws_nat_gateway" "main" {
-  allocation_id = aws_eip.nat.id
-  subnet_id     = aws_subnet.public[0].id
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-nat" })
-
-  depends_on = [aws_internet_gateway.main]
-}
-
 # ─── Route Tables ─────────────────────────────────────────────────────────────
 
 resource "aws_route_table" "public" {
@@ -113,13 +97,9 @@ resource "aws_route_table_association" "public" {
   route_table_id = aws_route_table.public.id
 }
 
+# only the local route, nothing in these subnets reaches the internet
 resource "aws_route_table" "private" {
   vpc_id = aws_vpc.main.id
-
-  route {
-    cidr_block     = "0.0.0.0/0"
-    nat_gateway_id = aws_nat_gateway.main.id
-  }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-private-rt" })
 }

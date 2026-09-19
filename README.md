@@ -1,8 +1,8 @@
 # GeoLang AWS infrastructure
 
-This Terraform stack defines the GeoLang platform on AWS. The full profile matches the current ViewTopia platform compose path for the flagship viewer, collaboration, notebook, and agent workflows.
+This Terraform stack defines the GeoLang platform on AWS. The full profile matches the current ViewTopia platform compose path for the flagship viewer, collaboration, notebook, and agent workflows. `profiles/preview.tfvars` is the cheap hosted subset of it.
 
-Nothing here has ever been applied. `terraform validate` passes and the script tests run on every push, but no AWS account holds these resources, so every sequence below is written from the configuration rather than from a run.
+Nothing here has ever been applied. `terraform validate` passes, the preview profile plans against account 000152811496, and the script tests run on every push, but no AWS account holds these resources, so every sequence below is written from the configuration rather than from a run.
 
 Terraform does not build images, populate secret values, load spatial data, create application users, or run database migrations itself. ECS services start at a desired count of zero until `runtime_secrets_ready` is set to `true`.
 
@@ -26,6 +26,14 @@ Terraform does not build images, populate secret values, load spatial data, crea
 - GeoLang executor
 - Jupyter
 
+## Hosted preview
+
+`profiles/preview.tfvars` runs nine services in us-east-1: Ptolemy, TileTopia, Agora, Sibyl, geodukt, the GeoLang API and executor, ViewTopia, and the platform proxy. It leaves out Geokode, Itinera, Interiora, geoplumb, Fenestra, and Jupyter, and turns off the bastion, WAF, GuardDuty, backups, autoscaling, Container Insights, and the tiles bucket.
+
+Six images come from ghcr and are named in `container_images`: `ptolemy:v0.2.0`, `tiletopia:v0.4.0`, `agora:v0.1.0`, `sibyl:v0.1.0`, `geodukt:v0.2.0`, and `geolang:v0.1.0` for both the GeoLang API and the executor. A service named in `container_images` gets no ECR repository, so the preview creates two repositories, ViewTopia and the platform proxy, and `publish-images.sh` builds only those two from the sibling checkouts. The ViewTopia ghcr image cannot start on Fargate, because its nginx resolves a `tiletopia` upstream at startup.
+
+Three things keep the idle cost near zero. Tasks run on Fargate Spot with `use_fargate_spot`. They sit in the public subnets with a public IP each, so there is no NAT gateway, and a task's public address costs the same 0.005 USD per hour that one NAT gateway costs across nine tasks. The Aurora cluster scales to zero.
+
 CloudFront sends requests to an Application Load Balancer. The load balancer has one catch-all target, the platform proxy. The proxy resolves private ECS services through Cloud Map. Its rewrites are close to `viewtopia/deploy/nginx-platform.conf` but not identical, so use the routing list below as the contract rather than the compose config.
 
 Two differences matter. The compose nginx routes `/collecta/*` to Collecta and `/speech/*` to the aavaaz speech service. Terraform deploys neither, so the hosted proxy returns 501 for `/collecta`, `/speech`, and everything under them. In the other direction the Caddyfile sends `/api/v1/assets`, `/api/v1/terrain/*`, and `/api/v1/catalog*` to TileTopia where nginx sends them to Ptolemy.
@@ -36,15 +44,17 @@ The Jupyter image is pinned to `quay.io/jupyter/scipy-notebook:2025-12-31`. That
 
 ## Databases and storage
 
-Ptolemy and Agora use separate encrypted RDS PostgreSQL 16 instances. RDS manages each master password in Secrets Manager. Ptolemy enables its required PostGIS extensions during its own migrations.
+Ptolemy and Agora share one encrypted Aurora PostgreSQL 17.10 cluster with a single `db.serverless` writer. The cluster holds two databases, `ptolemy` and `agora`, and both services connect with the same RDS-managed master credential, exactly as the compose stack does. RDS manages that password in Secrets Manager. Ptolemy enables its required PostGIS extensions during its own migrations.
 
-Both instances set `rds.force_ssl`, so a plaintext connection is refused. The `ptolemy_database_url` and `agora_database_url` secret values must end in `?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem`. Ptolemy and Agora already use the `sqlx` Rustls backend.
+`serverlessv2_scaling_configuration` runs from 0 to `db_max_capacity` ACUs and pauses the cluster after 300 seconds without a connection. Pausing only happens while the tasks are scaled to zero. Ptolemy's delivery worker polls every 5 seconds and Agora's watch scheduler every 30, so one running task of either keeps the cluster awake. Ptolemy's ECS health check uses `/api/v1/healthz` rather than `/api/v1/readyz` for the same reason: `readyz` runs `SELECT 1` every 30 seconds.
+
+The cluster parameter group sets `rds.force_ssl`, so a plaintext connection is refused. The `ptolemy_database_url` and `agora_database_url` secret values must end in `?sslmode=verify-full&sslrootcert=/etc/ssl/rds-global-bundle.pem`. Ptolemy and Agora already use the `sqlx` Rustls backend.
 
 Do not use `sslmode=require` here. Under `require`, sqlx installs a certificate verifier that accepts any certificate and ignores `sslrootcert`, so the connection is encrypted but the server is never authenticated and anything answering in the database's place can read and rewrite the session. Only `verify-ca` and `verify-full` check the chain.
 
 The URL must name the RDS endpoint directly, since a CNAME in front of it fails hostname verification. Each service image fetches the AWS RDS global CA bundle to the path above during its build.
 
-Agora's separate instance is intentional. Terraform can create it without placing a database administrator credential in configuration or state. It also adds a second instance charge and a second allocation of RDS storage. With the platform profile defaults, changing `db_instance_class`, `db_allocated_storage`, or `db_multi_az` changes the cost of both databases.
+Terraform does not create the `agora` database, because that would put a database administrator credential in configuration and state. The refresh Lambda creates it instead, through the RDS Data API, which the cluster exposes with `enable_http_endpoint`. On the one run where Agora's runtime URL secret still has no value, the Lambda asks `pg_database` for the name and issues `CREATE DATABASE` when it is absent. It refuses any name outside `^[a-z_][a-z0-9_]*$`. Once the secret holds a value the Lambda makes no Data API call at all, since any such call resumes a paused cluster and the schedule runs every 15 minutes.
 
 EFS access points provide persistent storage for:
 
@@ -59,7 +69,7 @@ EFS access points provide persistent storage for:
 - GeoLang outputs, user data, and live data shared with geodukt and the executor
 - Jupyter notebooks under `/home/jovyan/work`
 
-Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point. Place GeoLang Natural Earth data in the GeoLang Natural Earth access point.
+Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point. GeoLang downloads Natural Earth data on demand into its own directory, so its access point needs nothing staged.
 
 geoplumb uses a real public STAC layer configuration copied into its wrapper image from [containers/geoplumb/layers.toml](containers/geoplumb/layers.toml). The configuration has no credentials. Its image is built in two steps so the configuration is part of an immutable deployable artifact.
 
@@ -87,7 +97,7 @@ Terraform deliberately creates no secret versions. Populate the four operator-ma
 
 Do not use this command for the two database URLs. When `enable_database_secret_refresh` is true, Terraform deploys a Python 3.13 Lambda and an EventBridge schedule for those values. Every 15 minutes it reads the RDS-managed credentials, builds the verified direct-endpoint URL, updates a changed runtime URL secret, forces the matching ECS service to deploy new tasks, and waits for the service to stabilize. A failed ECS update restores the previous secret version so the next schedule retries. No password enters Terraform configuration, state, process arguments, or logs.
 
-The first scheduled run creates the Ptolemy and Agora URL versions. RDS rotates each managed master password every seven days by default. After a rotation, new database connections can fail until the next scheduled run and ECS replacement complete. A live rotation test remains required before public use.
+The first scheduled run creates the `agora` database and both URL secret versions. RDS rotates each managed master password every seven days by default. After a rotation, new database connections can fail until the next scheduled run and ECS replacement complete. A live rotation test remains required before public use.
 
 Existing secret resources can be supplied through `runtime_secret_arns`. Keys in that map override Terraform-managed secret ARNs. The two database URL targets must be full Secrets Manager ARNs when automatic refresh is enabled. Other runtime values may use Secrets Manager or SSM. If an existing secret uses a customer managed KMS key, grant the ECS execution role permission to decrypt it. The refresh Lambda has no wildcard KMS permission, so a customer managed key for either database secret needs an explicit policy change before use.
 
@@ -96,6 +106,8 @@ Existing secret resources can be supplied through `runtime_secret_arns`. Keys in
 There is no deployment-time place to configure the Jupyter token for ViewTopia. ViewTopia keeps it in per-browser `localStorage` with a hardcoded default of `viewtopia-local`, so every user pastes the deployed token into notebook settings by hand. Do not put the token in a frontend build argument.
 
 One token also means one shared credential to a server that runs arbitrary code as whoever holds it. Anyone given the token has the same access as everyone else, and revoking it means rotating the secret and telling every user to paste a new one.
+
+Sibyl's model endpoint is two plain variables next to that key. `llm_api_base` becomes `SIBYL_CLOUD_API_BASE` and `llm_models` becomes `SIBYL_CLOUD_MODELS`, and each is left off the task when empty. The preview profile points at the Bedrock mantle endpoint, `https://bedrock-mantle.us-east-1.api.aws/v1`, which serves `GET /models`, streams, and returns `tool_calls`. The `bedrock-runtime` OpenAI path refuses this account on a daily token quota. Only the key itself is a secret.
 
 ## Image build map
 
@@ -128,7 +140,7 @@ geolang-api      ../geolang
 platform-proxy   containers/platform-proxy
 ```
 
-There are thirteen ECR repositories. The table lists twelve, and geoplumb is the thirteenth. Both the GeoLang API and the GeoLang executor deploy from `geolang-api`, so it is one build and one push for two services.
+The platform profile creates thirteen ECR repositories. The table lists twelve, and geoplumb is the thirteenth. Both the GeoLang API and the GeoLang executor deploy from `geolang-api`, so it is one build and one push for two services. Every service named in `container_images` is skipped, which is how the preview profile comes down to two repositories.
 
 The publication command builds the geoplumb base first, then builds its wrapper with the same local base image. The platform proxy uses its explicit context under `containers/platform-proxy`.
 
@@ -138,15 +150,17 @@ Jupyter pulls its pinned Quay image directly and has no ECR repository.
 
 ## Deployment sequence
 
+State lives in the `geolang-terraform-state-000152811496` bucket in us-west-2 under `infrastructure/terraform.tfstate`, locked with `use_lockfile` rather than a DynamoDB table, which needs Terraform 1.10 or newer. The bucket's region is independent of the region a profile deploys to.
+
 Copy the example and choose a profile:
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
 terraform init
-terraform plan -var-file=profiles/platform.tfvars
+terraform plan -var-file=profiles/preview.tfvars
 ```
 
-The first apply must keep `runtime_secrets_ready = false`. It creates the network, databases, EFS access points, ECR repositories, secret containers, task definitions, and zero-count ECS services.
+The first apply must keep `runtime_secrets_ready = false`. It creates the network, the database cluster, EFS access points, ECR repositories, secret containers, task definitions, and zero-count ECS services.
 
 On the platform profile the load balancer security group needs the certificate ARN, the certificate needs ACM validation, and validation needs the domain's nameservers delegated at the registrar. Set `existing_hosted_zone_id` to a zone that is already delegated and one apply completes, because validation records go into a zone the registrar already points at.
 
@@ -161,14 +175,27 @@ After the apply that creates the load balancer:
 
 1. Run `./scripts/publish-images.sh <image_tag>` to build and push every enabled ECR image.
 2. Stage the required files in EFS.
-3. Populate the four operator-managed runtime secrets and wait for the database refresh job to create both URL secret versions.
-4. Distribute the Jupyter token to the people who need notebooks. There is nothing to configure at deploy time, because each user pastes the token into ViewTopia's notebook settings in their own browser.
+3. Populate the operator-managed runtime secrets and wait for the database refresh job to create the `agora` database and both URL secret versions.
+4. Distribute the Jupyter token to the people who need notebooks, on a profile that runs it. There is nothing to configure at deploy time, because each user pastes the token into ViewTopia's notebook settings in their own browser.
 5. Set `runtime_secrets_ready = true`.
 6. Review a new plan before applying it.
 
-Terraform outputs the RDS endpoints, RDS managed credential secret ARNs, runtime secret ARNs, ECR repositories, and EFS access points needed for those steps.
+Terraform outputs the cluster endpoint, its managed credential secret ARN, runtime secret ARNs, ECR repositories, and EFS access points needed for those steps.
 
 Do not use `terraform apply -auto-approve` for the readiness transition. A normal plan makes the service scale-up visible before it changes AWS.
+
+## Scaling the preview up and down
+
+Once the services are running, the cost of an idle stack is the load balancer, the CloudFront distribution, EFS, and whatever the tasks burn. `scripts/platform-scale.sh` sets every service on the cluster to a desired count of 0 or 1 without a Terraform run:
+
+```bash
+./scripts/platform-scale.sh down --profile geolang
+./scripts/platform-scale.sh up --profile geolang
+```
+
+It reads the cluster name from `terraform output -raw ecs_cluster`, lists the cluster's services, and prints one line per service. It accepts nothing but `up`, `down`, and an optional `--profile`.
+
+`nightly_scale_down` does the down half on a schedule. Set a timezone and an hour and each service gets an EventBridge schedule that calls `ecs:UpdateService` with a desired count of 0 at that local hour. The preview profile uses 23:00 America/Toronto. The tasks stop, the cluster pauses five minutes later, and `platform-scale.sh up` or a Terraform apply brings both back. There is deliberately no scale-up schedule, so a manual scale-down before an absence stays down.
 
 ## Routing
 
@@ -207,7 +234,9 @@ The port 80 case is what `enable_cdn = true` with no domain would give you: `ori
 
 ECS tasks are placed in four security groups, plus a fifth the platform proxy and the GeoLang API carry as a second group.
 
-Most services share one group that reaches every other service, the Ptolemy database, and the internet. On the platform profile that group holds twelve tasks: Ptolemy, TileTopia, Geokode, Itinera, Interiora, geoplumb, Fenestra, Sibyl, geodukt, ViewTopia, the platform proxy, and the GeoLang API. The Agora database ingress names only the Agora security group, so the shared group cannot reach it.
+Most services share one group that reaches every other service, the database cluster, and the internet. On the platform profile that group holds twelve tasks: Ptolemy, TileTopia, Geokode, Itinera, Interiora, geoplumb, Fenestra, Sibyl, geodukt, ViewTopia, the platform proxy, and the GeoLang API. The cluster admits 5432 from that group and from Agora's, and from nothing else.
+
+Tasks carry a public IP because there is no NAT gateway. That changes no inbound rule: the shared group admits only the load balancer and the groups named here, and the two user-code groups admit only what the paragraphs below describe.
 
 Agora has its own group because it listens on the same port the executor's tool calls use. Its one ingress rule admits port 3000 from the session callers group, which nothing listens on and which only the platform proxy and the GeoLang API carry, each alongside the shared group. The other ten tasks in the shared group cannot open a connection to Agora, and neither can the GeoLang executor or Jupyter, the two tasks running user-supplied code.
 
@@ -219,11 +248,11 @@ The GeoLang executor has a group whose egress is limited to its tool call target
 
 The platform profile turns on three things the sections above do not cover.
 
-`enable_bastion` puts a `bastion_instance_type` Amazon Linux 2023 instance in a public subnet with the SSM managed instance policy, IMDSv2 only, and an encrypted root volume. It opens no SSH port unless `bastion_allowed_cidrs` names a CIDR. Its security group is admitted to both database instances on 5432, so it is a fifth path to the data alongside the four task groups. `terraform output bastion_ssm_command` prints the session command. `bastion_db_tunnel_command` prints a ready-to-run `AWS-StartPortForwardingSessionToRemoteHost` command whose `host` parameter is the Ptolemy database hostname. It forwards local port 5432 to the database, so it prints `Bastion or database disabled` unless both `enable_bastion` and `enable_database` are true.
+`enable_bastion` puts a `bastion_instance_type` Amazon Linux 2023 instance in a public subnet with the SSM managed instance policy, IMDSv2 only, and an encrypted root volume. It opens no SSH port unless `bastion_allowed_cidrs` names a CIDR. Its security group is admitted to the database cluster on 5432, so it is a fifth path to the data alongside the four task groups. `terraform output bastion_ssm_command` prints the session command. `bastion_db_tunnel_command` prints a ready-to-run `AWS-StartPortForwardingSessionToRemoteHost` command whose `host` parameter is the Ptolemy database hostname. It forwards local port 5432 to the database, so it prints `Bastion or database disabled` unless both `enable_bastion` and `enable_database` are true.
 
 `enable_waf` creates a regional web ACL, attaches it to the load balancer, and logs to the `aws-waf-logs-geolang-prod` CloudWatch group for 30 days. It default-allows and adds a rate limit of `waf_rate_limit` requests per five minutes, the AWS common, known bad inputs, SQL injection, and Linux managed rule groups, and a country block when `waf_blocked_countries` is set. The common rule set counts rather than blocks `SizeRestrictions_BODY` and `CrossSiteScripting_BODY`, since large and XML-shaped geospatial payloads trip both. The rate limit aggregates on the address the load balancer sees. With `enable_cdn` set the load balancer sees a CloudFront edge, so the rule keys on the first address in `X-Forwarded-For` instead. A request whose `X-Forwarded-For` is malformed is not counted and not blocked.
 
-`enable_backup` creates a vault and a plan covering both database instances and the EFS file system. A daily backup at 03:00 UTC is deleted after `backup_retention_days`, and a Sunday backup is kept three times as long. Cross-region copies are off unless `enable_cross_region_backup` is set, and the copy target is the `Default` vault in `dr_region`, which this stack does not create.
+`enable_backup` creates a vault and a plan covering the database cluster and the EFS file system. A daily backup at 03:00 UTC is deleted after `backup_retention_days`, and a Sunday backup is kept three times as long. Cross-region copies are off unless `enable_cross_region_backup` is set, and the copy target is the `Default` vault in `dr_region`, which this stack does not create.
 
 ## Validation
 
@@ -235,17 +264,18 @@ terraform init -backend=false
 terraform validate
 ```
 
-The GitHub workflow runs the same format and validation checks with Terraform 1.15.8, since `fmt` output tracks the toolchain version. Its manual plan job needs AWS credentials because `terraform plan` reads account and region data sources. It takes a long-lived access key pair from the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets, not an OIDC role that mints a short-lived one. No runtime application credential is passed to Terraform.
+The GitHub workflow runs the same format and validation checks with Terraform 1.15.8, since `fmt` output tracks the toolchain version. `-backend=false` keeps that job away from the state bucket. Its manual plan job runs a real `terraform init` and needs AWS credentials, both for the bucket and because `terraform plan` reads account and region data sources. It takes a long-lived access key pair from the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets, not an OIDC role that mints a short-lived one. No runtime application credential is passed to Terraform.
 
-The two shell commands and the refresh Lambda have their own tests, which stub the AWS CLI, Docker, and Terraform and so contact nothing:
+The three shell commands and the refresh Lambda have their own tests, which stub the AWS CLI, Docker, and Terraform and so contact nothing:
 
 ```bash
 bash tests/test_publish_images.sh
 bash tests/test_put_runtime_secret.sh
+bash tests/test_platform_scale.sh
 python3 tests/test_refresh_database_secrets.py
 ```
 
-The workflow runs all three on every push and pull request.
+The workflow runs all four on every push and pull request.
 
 ## Important outputs
 
@@ -254,8 +284,6 @@ The workflow runs all three on every push and pull request.
 - `ecr_repositories`
 - `database_endpoint`
 - `database_master_user_secret_arn`
-- `agora_database_endpoint`
-- `agora_database_master_user_secret_arn`
 - `runtime_secret_arns`
 - `efs_access_points`
 - `service_discovery_namespace`
@@ -272,12 +300,12 @@ The infrastructure can be planned before these are resolved, with all services h
 
 - The Ptolemy and Agora database URL secrets must use `sslmode=verify-full` with `sslrootcert`, or they cannot connect to a database that forces SSL. The image side of this is already done: both services name the `tls-rustls-ring` sqlx backend.
 - Every enabled ECR image must be pushed under the tag in `image_tag`.
-- EFS spatial, coverage, and GeoLang Natural Earth data must be staged.
+- EFS spatial and coverage data must be staged on a profile that runs Geokode, Itinera, or Fenestra.
 - All required secret containers must have a current value.
-- DNS delegation and ACM validation must complete when the platform profile uses `geolang.com`.
+- DNS delegation and ACM validation must complete when the platform profile uses `geolang.com`. Until the certificate exists, that profile's plan stops on the HTTPS listener count, which cannot be resolved before apply.
 - Set `enable_guardduty = false` when the account already has a detector in the deployment region. `aws_guardduty_detector` fails against an account that already has one.
 - Set `existing_hosted_zone_id` when the domain already has a hosted zone. Left empty, the apply creates a second zone with different nameservers, and ACM validation never resolves because the registrar points at the old zone.
-- The S3 backend is commented out. `terraform init` in CI runs against empty state, so the workflow's manual plan job always reports that it will create everything. It cannot serve as the pre-apply review described above.
+- Fargate Spot tasks are reclaimed with two minutes of warning. A preview task can disappear mid-request and come back when capacity allows.
 - The load balancer security group assumes the CloudFront managed prefix list counts 55 of its 60 rules. AWS raises that list's `MaxEntries` over time, and at 60 the security group create fails.
 
 Review the second plan after setting `runtime_secrets_ready = true`. It is the point where ECS begins running the platform.

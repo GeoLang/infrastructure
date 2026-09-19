@@ -15,6 +15,7 @@ on:
         options:
           - minimal
           - platform
+          - preview
 
 env:
   # fmt output is version sensitive, so this tracks the local toolchain
@@ -54,6 +55,9 @@ jobs:
 
       - name: Put runtime secret
         run: bash tests/test_put_runtime_secret.sh
+
+      - name: Platform scale
+        run: bash tests/test_platform_scale.sh
 
       - name: Refresh database secrets
         run: python3 tests/test_refresh_database_secrets.py

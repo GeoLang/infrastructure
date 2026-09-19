@@ -11,9 +11,6 @@
 #   - Jupyter notebook kernels
 #   - ViewTopia and the platform edge proxy
 #
-# This profile creates two RDS instances, one for Ptolemy and one for Agora.
-# The Agora instance duplicates the selected RDS compute and storage cost.
-#
 # Usage:
 #   terraform apply -var-file=profiles/platform.tfvars
 
@@ -37,10 +34,8 @@ enable_viewtopia        = true
 enable_platform_proxy   = true
 
 # ── Database ─────────────────────────────────────────────────────
-enable_database      = true
-db_instance_class    = "db.t4g.micro"
-db_allocated_storage = 20
-db_multi_az          = false # Set true for production HA
+enable_database = true
+db_max_capacity = 2
 
 # ── CDN ──────────────────────────────────────────────────────────
 enable_cdn = true

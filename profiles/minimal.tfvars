@@ -7,7 +7,7 @@
 #   - Platform proxy (public routing edge)
 #
 # No database, geocoding, or routing services.
-# Estimated cost: ~$50-80/month (Fargate + NAT + ALB)
+# Estimated cost: ~$40-70/month (Fargate Spot + ALB)
 #
 # Usage:
 #   terraform apply -var-file=profiles/minimal.tfvars

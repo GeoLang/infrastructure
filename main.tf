@@ -10,11 +10,12 @@
 #
 # Deployment profiles:
 #   terraform apply -var-file=profiles/minimal.tfvars   # Dev: 4 services
-#   terraform apply -var-file=profiles/platform.tfvars  # Full: all services + RDS
+#   terraform apply -var-file=profiles/preview.tfvars   # Hosted preview: 9 services
+#   terraform apply -var-file=profiles/platform.tfvars  # Full: all services
 #
 # CloudFront and the ALB send all application traffic to the edge proxy.
-# The proxy applies the compose path rewrites and reaches private tasks through
-# Cloud Map. Ptolemy and Agora each use an isolated RDS PostgreSQL instance.
+# The proxy applies the compose path rewrites and reaches the other tasks
+# through Cloud Map. Ptolemy and Agora share one Aurora cluster.
 
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
@@ -45,22 +46,25 @@ locals {
   ])
 
   # ── Resolve container images ────────────────────────────────────
-  # Use provided image or fall back to ECR repository URL.
-  ecr_services = compact([
-    var.enable_ptolemy ? "ptolemy" : "",
-    var.enable_tiletopia ? "tiletopia" : "",
-    var.enable_geokode ? "geokode" : "",
-    var.enable_itinera ? "itinera" : "",
-    var.enable_interiora ? "interiora" : "",
-    var.enable_geoplumb ? "geoplumb" : "",
-    var.enable_fenestra ? "fenestra" : "",
-    var.enable_agora ? "agora" : "",
-    var.enable_sibyl ? "sibyl" : "",
-    var.enable_geodukt ? "geodukt" : "",
-    var.enable_geolang || var.enable_geolang_executor ? "geolang-api" : "",
-    var.enable_viewtopia ? "viewtopia" : "",
-    var.enable_platform_proxy ? "platform-proxy" : "",
-  ])
+  # an overridden image gets no ECR repository, so publish-images.sh skips it
+  ecr_services = [
+    for service in compact([
+      var.enable_ptolemy ? "ptolemy" : "",
+      var.enable_tiletopia ? "tiletopia" : "",
+      var.enable_geokode ? "geokode" : "",
+      var.enable_itinera ? "itinera" : "",
+      var.enable_interiora ? "interiora" : "",
+      var.enable_geoplumb ? "geoplumb" : "",
+      var.enable_fenestra ? "fenestra" : "",
+      var.enable_agora ? "agora" : "",
+      var.enable_sibyl ? "sibyl" : "",
+      var.enable_geodukt ? "geodukt" : "",
+      var.enable_geolang || var.enable_geolang_executor ? "geolang-api" : "",
+      var.enable_viewtopia ? "viewtopia" : "",
+      var.enable_platform_proxy ? "platform-proxy" : "",
+    ]) : service
+    if !contains(keys(var.container_images), service)
+  ]
 
   ecr_service_images = {
     for service in local.ecr_services : service => "${module.ecr.repository_urls[service]}:${var.image_tag}"
@@ -127,7 +131,11 @@ locals {
   )
 
   managed_runtime_secret_arns = var.enable_secrets ? module.secrets[0].secret_arns : {}
-  runtime_secret_arns         = merge(local.managed_runtime_secret_arns, var.runtime_secret_arns)
+  # empty overrides are dropped so a key in this map always means a usable ARN
+  runtime_secret_arns = merge(
+    local.managed_runtime_secret_arns,
+    { for name, arn in var.runtime_secret_arns : name => arn if arn != "" },
+  )
   required_runtime_secrets = toset(compact([
     var.enable_ptolemy ? "platform_jwt" : "",
     var.enable_ptolemy ? "ptolemy_database_url" : "",
@@ -175,7 +183,7 @@ resource "terraform_data" "runtime_secrets" {
   lifecycle {
     precondition {
       condition = !var.runtime_secrets_ready || alltrue([
-        for name in local.required_runtime_secrets : lookup(local.runtime_secret_arns, name, "") != ""
+        for name in local.required_runtime_secrets : contains(keys(local.runtime_secret_arns), name)
       ])
       error_message = "runtime_secrets_ready requires an ARN for every enabled service secret."
     }
@@ -215,47 +223,28 @@ module "loadbalancer" {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# DATABASE (RDS PostGIS)
+# DATABASE (Aurora PostgreSQL Serverless v2)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 module "database" {
   source = "./modules/database"
   count  = var.enable_database ? 1 : 0
 
-  name_prefix           = local.name_prefix
-  vpc_id                = module.networking.vpc_id
-  private_subnet_ids    = module.networking.private_subnet_ids
-  ecs_security_group_id = module.loadbalancer.ecs_security_group_id
+  name_prefix        = local.name_prefix
+  vpc_id             = module.networking.vpc_id
+  private_subnet_ids = module.networking.private_subnet_ids
+  client_security_group_ids = [
+    module.loadbalancer.ecs_security_group_id,
+    module.loadbalancer.agora_security_group_id,
+  ]
 
-  instance_class    = var.db_instance_class
-  allocated_storage = var.db_allocated_storage
-  db_name           = var.db_name
-  db_username       = var.db_username
-  multi_az          = var.db_multi_az
+  max_capacity = var.db_max_capacity
+  db_name      = var.db_name
+  db_username  = var.db_username
 
   bastion_security_group_id = var.enable_bastion ? module.bastion[0].security_group_id : ""
 
   tags = local.tags
-}
-
-module "agora_database" {
-  source = "./modules/database"
-  count  = var.enable_database && var.enable_agora ? 1 : 0
-
-  name_prefix           = "${local.name_prefix}-agora"
-  vpc_id                = module.networking.vpc_id
-  private_subnet_ids    = module.networking.private_subnet_ids
-  ecs_security_group_id = module.loadbalancer.agora_security_group_id
-
-  instance_class    = var.db_instance_class
-  allocated_storage = var.db_allocated_storage
-  db_name           = "agora"
-  db_username       = "agora"
-  multi_az          = var.db_multi_az
-
-  bastion_security_group_id = var.enable_bastion ? module.bastion[0].security_group_id : ""
-
-  tags = merge(local.tags, { Service = "agora" })
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -280,10 +269,11 @@ module "ecs" {
   name_prefix                      = local.name_prefix
   aws_region                       = var.aws_region
   vpc_id                           = module.networking.vpc_id
-  private_subnet_ids               = module.networking.private_subnet_ids
+  task_subnet_ids                  = module.networking.public_subnet_ids
   ecs_security_group_id            = module.loadbalancer.ecs_security_group_id
   untrusted_code_security_group_id = module.loadbalancer.untrusted_code_security_group_id
   enable_container_insights        = var.enable_container_insights
+  use_fargate_spot                 = var.use_fargate_spot
   log_retention_days               = var.log_retention_days
 
   alb_listener_arn       = module.loadbalancer.http_listener_arn
@@ -301,15 +291,16 @@ module "ecs" {
         memory         = local.service_sizing["ptolemy"].memory
         desired_count  = var.runtime_secrets_ready ? local.service_sizing["ptolemy"].desired_count : 0
         container_port = 3000
-        health_path    = "/api/v1/readyz"
-        command        = ["serve", "--bind", "0.0.0.0:3000"]
+        # readyz queries the database every 30 s and keeps the cluster from pausing
+        health_path = "/api/v1/healthz"
+        command     = ["serve", "--bind", "0.0.0.0:3000"]
         environment = [
           { name = "RUST_LOG", value = "info,ptolemy_api=debug" },
           { name = "PTOLEMY_PORT", value = "3000" },
         ]
         secrets = concat(
-          lookup(local.runtime_secret_arns, "ptolemy_database_url", "") != "" ? [{ name = "DATABASE_URL", valueFrom = local.runtime_secret_arns["ptolemy_database_url"] }] : [],
-          lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [{ name = "PTOLEMY_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
+          contains(keys(local.runtime_secret_arns), "ptolemy_database_url") ? [{ name = "DATABASE_URL", valueFrom = local.runtime_secret_arns["ptolemy_database_url"] }] : [],
+          contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PTOLEMY_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
         )
       }
     } : {},
@@ -331,7 +322,7 @@ module "ecs" {
           { name = "RUST_LOG", value = "info,tiletopia=debug" },
           { name = "AWS_REGION", value = var.aws_region },
         ]
-        secrets = lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [
+        secrets = contains(keys(local.runtime_secret_arns), "platform_jwt") ? [
           { name = "TILETOPIA_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] },
         ] : []
         efs_volumes = var.enable_efs ? { tiletopia = local.efs_volumes["tiletopia"] } : {}
@@ -396,7 +387,7 @@ module "ecs" {
           { name = "INTERIORA_DATA_DIR", value = "/data" },
           { name = "RUST_LOG", value = "info,interiora=debug" },
         ]
-        secrets = lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [
+        secrets = contains(keys(local.runtime_secret_arns), "platform_jwt") ? [
           { name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] },
         ] : []
         efs_volumes = var.enable_efs ? { interiora = local.efs_volumes["interiora"] } : {}
@@ -448,7 +439,7 @@ module "ecs" {
           { name = "FENESTRA_PUBLIC_URL", value = "${local.platform_origin}/ogc" },
           { name = "COVERAGE_DIR", value = "/coverages" },
         ]
-        secrets = lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [
+        secrets = contains(keys(local.runtime_secret_arns), "platform_jwt") ? [
           { name = "FENESTRA_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] },
         ] : []
         efs_volumes = var.enable_efs ? { fenestra-coverages = local.efs_volumes["fenestra-coverages"] } : {}
@@ -472,8 +463,8 @@ module "ecs" {
           { name = "RUST_LOG", value = "info" },
         ]
         secrets = concat(
-          lookup(local.runtime_secret_arns, "agora_database_url", "") != "" ? [{ name = "DATABASE_URL", valueFrom = local.runtime_secret_arns["agora_database_url"] }] : [],
-          lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
+          contains(keys(local.runtime_secret_arns), "agora_database_url") ? [{ name = "DATABASE_URL", valueFrom = local.runtime_secret_arns["agora_database_url"] }] : [],
+          contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
         )
       }
     } : {},
@@ -486,16 +477,20 @@ module "ecs" {
         desired_count  = var.runtime_secrets_ready ? local.service_sizing["sibyl"].desired_count : 0
         container_port = 8090
         health_path    = "/health"
-        environment = [
-          { name = "SIBYL_HOST", value = "0.0.0.0" },
-          { name = "SIBYL_PORT", value = "8090" },
-          { name = "SIBYL_DB_PATH", value = "/data/sibyl.db" },
-          { name = "GEOLANG_URL", value = "http://geolang-api.${local.sd_suffix}:8080" },
-          { name = "RUST_LOG", value = "info" },
-        ]
+        environment = concat(
+          [
+            { name = "SIBYL_HOST", value = "0.0.0.0" },
+            { name = "SIBYL_PORT", value = "8090" },
+            { name = "SIBYL_DB_PATH", value = "/data/sibyl.db" },
+            { name = "GEOLANG_URL", value = "http://geolang-api.${local.sd_suffix}:8080" },
+            { name = "RUST_LOG", value = "info" },
+          ],
+          var.llm_api_base != "" ? [{ name = "SIBYL_CLOUD_API_BASE", value = var.llm_api_base }] : [],
+          var.llm_models != "" ? [{ name = "SIBYL_CLOUD_MODELS", value = var.llm_models }] : [],
+        )
         secrets = concat(
-          lookup(local.runtime_secret_arns, "llm_api_key", "") != "" ? [{ name = "SIBYL_CLOUD_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] }] : [],
-          lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
+          contains(keys(local.runtime_secret_arns), "llm_api_key") ? [{ name = "SIBYL_CLOUD_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] }] : [],
+          contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
         )
         efs_volumes = var.enable_efs ? { sibyl = local.efs_volumes["sibyl"] } : {}
         mount_points = var.enable_efs ? [
@@ -518,7 +513,7 @@ module "ecs" {
         environment = [
           { name = "RUST_LOG", value = "info,geodukt=debug" },
         ]
-        secrets = lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [
+        secrets = contains(keys(local.runtime_secret_arns), "platform_jwt") ? [
           { name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] },
         ] : []
         efs_volumes = var.enable_efs ? {
@@ -557,7 +552,7 @@ module "ecs" {
           { name = "QGIS_PREFIX_PATH", value = "/usr" },
           { name = "HOME", value = "/tmp" },
         ]
-        secrets = lookup(local.runtime_secret_arns, "geolang_executor", "") != "" ? [
+        secrets = contains(keys(local.runtime_secret_arns), "geolang_executor") ? [
           { name = "GEOLANG_EXECUTOR_SECRET", valueFrom = local.runtime_secret_arns["geolang_executor"] },
         ] : []
         efs_volumes = var.enable_efs ? {
@@ -601,8 +596,8 @@ module "ecs" {
           var.enable_geolang_executor ? [{ name = "GEOLANG_EXECUTOR_URL", value = "http://geolang-executor.${local.sd_suffix}:8081" }] : [],
         )
         secrets = concat(
-          lookup(local.runtime_secret_arns, "platform_jwt", "") != "" ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
-          lookup(local.runtime_secret_arns, "geolang_executor", "") != "" ? [{ name = "GEOLANG_EXECUTOR_SECRET", valueFrom = local.runtime_secret_arns["geolang_executor"] }] : [],
+          contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
+          contains(keys(local.runtime_secret_arns), "geolang_executor") ? [{ name = "GEOLANG_EXECUTOR_SECRET", valueFrom = local.runtime_secret_arns["geolang_executor"] }] : [],
         )
         efs_volumes = var.enable_efs ? {
           geolang-cache         = local.efs_volumes["geolang-cache"]
@@ -639,7 +634,7 @@ module "ecs" {
           "--ServerApp.trust_xheaders=True",
         ]
         environment = []
-        secrets = lookup(local.runtime_secret_arns, "jupyter_token", "") != "" ? [
+        secrets = contains(keys(local.runtime_secret_arns), "jupyter_token") ? [
           { name = "JUPYTER_TOKEN", valueFrom = local.runtime_secret_arns["jupyter_token"] },
         ] : []
         efs_volumes = var.enable_efs ? { jupyter-work = local.efs_volumes["jupyter-work"] } : {}
@@ -684,7 +679,7 @@ module "ecs" {
     } : {},
   )
 
-  depends_on = [module.ecr, module.database, module.agora_database, module.storage, module.secrets]
+  depends_on = [module.ecr, module.database, module.storage, module.secrets]
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -796,10 +791,7 @@ module "monitoring" {
   ecs_cluster_name = module.ecs.cluster_name
   alb_arn_suffix   = module.loadbalancer.alb_arn_suffix
   alert_email      = var.alert_email
-  rds_instance_ids = toset(concat(
-    var.enable_database ? [module.database[0].identifier] : [],
-    var.enable_database && var.enable_agora ? [module.agora_database[0].identifier] : [],
-  ))
+  rds_instance_ids = toset(var.enable_database ? [module.database[0].instance_identifier] : [])
 
   services = module.ecs.service_names
 
@@ -925,11 +917,8 @@ module "backup" {
   source = "./modules/backup"
   count  = var.enable_backup && var.enable_database ? 1 : 0
 
-  name_prefix = local.name_prefix
-  rds_arns = concat(
-    [module.database[0].arn],
-    var.enable_agora ? [module.agora_database[0].arn] : [],
-  )
+  name_prefix         = local.name_prefix
+  rds_arns            = [module.database[0].arn]
   efs_arn             = var.enable_efs ? module.storage[0].file_system_arn : ""
   retention_days      = var.backup_retention_days
   enable_cross_region = var.enable_cross_region_backup

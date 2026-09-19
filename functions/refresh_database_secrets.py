@@ -1,11 +1,13 @@
 import json
 import os
+import re
 from urllib.parse import quote
 
 
 WAITER_DELAY_SECONDS = 5
 WAITER_MAX_ATTEMPTS = 45
 RDS_CA_BUNDLE_PATH = "/etc/ssl/rds-global-bundle.pem"
+DATABASE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 
 
 def build_database_url(username, password, host, port, database_name):
@@ -66,7 +68,31 @@ def restore_target_version(
     secrets_client.update_secret_version_stage(**update_arguments)
 
 
-def refresh_database_secret(target, secrets_client, ecs_client):
+def create_database_if_absent(rds_data_client, target):
+    database_name = target["database_name"]
+    if not DATABASE_NAME_PATTERN.match(database_name):
+        raise ValueError(f"database name must match {DATABASE_NAME_PATTERN.pattern}: {database_name}")
+
+    existing = rds_data_client.execute_statement(
+        resourceArn=target["cluster_arn"],
+        secretArn=target["source_secret_arn"],
+        database=target["admin_database"],
+        sql="SELECT 1 FROM pg_database WHERE datname = :name",
+        parameters=[{"name": "name", "value": {"stringValue": database_name}}],
+    )
+    if existing.get("records"):
+        return False
+
+    rds_data_client.execute_statement(
+        resourceArn=target["cluster_arn"],
+        secretArn=target["source_secret_arn"],
+        database=target["admin_database"],
+        sql=f'CREATE DATABASE "{database_name}"',
+    )
+    return True
+
+
+def refresh_database_secret(target, secrets_client, ecs_client, rds_data_client):
     username, password = read_source_credentials(secrets_client, target["source_secret_arn"])
     database_url = build_database_url(
         username,
@@ -78,6 +104,10 @@ def refresh_database_secret(target, secrets_client, ecs_client):
     current_target = read_target_secret(secrets_client, target["target_secret_arn"])
     if current_target is not None and current_target["SecretString"] == database_url:
         return {"name": target["name"], "changed": False}
+
+    # a Data API call resumes a paused cluster, so only the first run may make one
+    if current_target is None and target.get("cluster_arn"):
+        create_database_if_absent(rds_data_client, target)
 
     put_response = secrets_client.put_secret_value(
         SecretId=target["target_secret_arn"],
@@ -113,9 +143,9 @@ def refresh_database_secret(target, secrets_client, ecs_client):
     return {"name": target["name"], "changed": True}
 
 
-def refresh_database_secrets(targets, secrets_client, ecs_client):
+def refresh_database_secrets(targets, secrets_client, ecs_client, rds_data_client):
     return [
-        refresh_database_secret(target, secrets_client, ecs_client)
+        refresh_database_secret(target, secrets_client, ecs_client, rds_data_client)
         for target in targets
     ]
 
@@ -132,5 +162,6 @@ def handler(event, context):
             targets,
             boto3.client("secretsmanager"),
             boto3.client("ecs"),
+            boto3.client("rds-data"),
         )
     }

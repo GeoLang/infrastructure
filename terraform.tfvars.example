@@ -28,9 +28,7 @@ environment  = "prod"      # dev | staging | prod
 # RDS manages its master password in Secrets Manager. Runtime database URLs and
 # application credentials must be populated outside Terraform. See README.md.
 
-# db_instance_class    = "db.t4g.micro"   # ~$12/month
-# db_allocated_storage = 20               # GB, auto-scales to 2x
-# db_multi_az          = false            # true for production HA (~2x cost)
+# db_max_capacity = 2   # Aurora Serverless v2 ACU ceiling, the floor is 0
 
 # ─── Service Toggles ────────────────────────────────────────────────────────
 # Enable/disable individual services. See profiles/ for pre-built configs.
@@ -42,7 +40,7 @@ environment  = "prod"      # dev | staging | prod
 # enable_interiora = false   # Indoor maps + indoor routing
 # enable_geoplumb  = false   # Windowed raster tiles over STAC
 # enable_fenestra  = false   # OGC service gateway
-# enable_agora     = false   # Live collaboration and an isolated RDS instance
+# enable_agora     = false   # Live collaboration, on its own database
 # enable_sibyl     = false   # Agent loop
 # enable_geodukt   = false   # Workflow runner
 # enable_geolang_executor = false # Isolated tool executor

@@ -15,7 +15,7 @@ variable "vpc_id" {
   type = string
 }
 
-variable "private_subnet_ids" {
+variable "task_subnet_ids" {
   type = list(string)
 }
 
@@ -31,6 +31,12 @@ variable "untrusted_code_security_group_id" {
 variable "enable_container_insights" {
   type    = bool
   default = true
+}
+
+variable "use_fargate_spot" {
+  description = "Run tasks on Fargate Spot instead of on-demand Fargate"
+  type        = bool
+  default     = true
 }
 
 variable "tags" {
@@ -93,8 +99,9 @@ variable "alb_listener_https_arn" {
 }
 
 locals {
-  public_services = { for name, service in var.services : name => service if service.public }
-  secret_arns     = distinct(flatten([for service in values(var.services) : [for secret in service.secrets : secret.valueFrom]]))
+  public_services     = { for name, service in var.services : name => service if service.public }
+  service_secret_arns = flatten([for service in values(var.services) : [for secret in service.secrets : secret.valueFrom]])
+  secret_arns         = distinct(local.service_secret_arns)
 
   service_security_group_ids = {
     for name, service in var.services : name => coalesce(
@@ -115,6 +122,11 @@ resource "aws_ecs_cluster" "main" {
   }
 
   tags = var.tags
+}
+
+resource "aws_ecs_cluster_capacity_providers" "main" {
+  cluster_name       = aws_ecs_cluster.main.name
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
 }
 
 # ─── Service Discovery (Cloud Map) ───────────────────────────────────────────
@@ -175,7 +187,7 @@ resource "aws_iam_role_policy_attachment" "ecs_execution" {
 
 # Allow pulling secrets from SSM Parameter Store
 resource "aws_iam_role_policy" "ecs_execution_secrets" {
-  count = length(local.secret_arns) > 0 ? 1 : 0
+  count = length(local.service_secret_arns) > 0 ? 1 : 0
 
   name = "${var.name_prefix}-ssm-read"
   role = aws_iam_role.ecs_execution.id
@@ -423,12 +435,21 @@ resource "aws_ecs_service" "services" {
   cluster         = aws_ecs_cluster.main.id
   task_definition = aws_ecs_task_definition.services[each.key].arn
   desired_count   = each.value.desired_count
-  launch_type     = "FARGATE"
+  launch_type     = var.use_fargate_spot ? null : "FARGATE"
 
+  dynamic "capacity_provider_strategy" {
+    for_each = var.use_fargate_spot ? [1] : []
+    content {
+      capacity_provider = "FARGATE_SPOT"
+      weight            = 1
+    }
+  }
+
+  # tasks carry a public IP instead of routing through a NAT gateway
   network_configuration {
-    subnets          = var.private_subnet_ids
+    subnets          = var.task_subnet_ids
     security_groups  = concat([local.service_security_group_ids[each.key]], each.value.additional_security_group_ids)
-    assign_public_ip = false
+    assign_public_ip = true
   }
 
   dynamic "load_balancer" {
@@ -445,6 +466,7 @@ resource "aws_ecs_service" "services" {
   }
 
   depends_on = [
+    aws_ecs_cluster_capacity_providers.main,
     aws_lb_listener_rule.http,
     aws_lb_listener_rule.https,
   ]
