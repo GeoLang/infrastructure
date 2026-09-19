@@ -2,7 +2,7 @@
 
 This Terraform stack defines the GeoLang platform on AWS. The full profile matches the current ViewTopia platform compose path for the flagship viewer, collaboration, notebook, and agent workflows. `profiles/preview.tfvars` is the cheap hosted subset of it.
 
-Nothing here has ever been applied. `terraform validate` passes, the preview profile plans against account 000152811496, and the script tests run on every push, but no AWS account holds these resources, so every sequence below is written from the configuration rather than from a run.
+The preview profile was applied to account 000152811496 in us-east-1 on 2026-09-19 and serves at the CloudFront hostname in `terraform output platform_url`. The full and minimal profiles have never been applied, so their sequences below are written from the configuration rather than from a run.
 
 Terraform does not build images, populate secret values, load spatial data, create application users, or run database migrations itself. ECS services start at a desired count of zero until `runtime_secrets_ready` is set to `true`.
 
