@@ -60,6 +60,7 @@ run_publisher() {
     TERRAFORM_OUTPUT="$terraform_output" \
     AWS_LOOKUP_RESULT="$aws_lookup_result" \
     DOCKER_FAIL_IMAGE="$failing_image_reference" \
+    VITE_CARTO_API_KEY="test-carto-key" \
     ACTION_LOG="$action_log" \
     "$PUBLISH_IMAGES_SCRIPT" "$image_tag" >"$output_file" 2>&1
 }
@@ -136,10 +137,11 @@ run_publisher "$complete_repositories" absent "" "$TEST_TAG" "$complete_action_l
 
 infrastructure_directory="$(cd -- "$TEST_DIRECTORY/.." && pwd)"
 workspace_directory="$(cd -- "$infrastructure_directory/.." && pwd)"
-for service_name in ptolemy tiletopia geokode itinera interiora fenestra agora sibyl geodukt viewtopia
+for service_name in ptolemy tiletopia geokode itinera interiora fenestra agora sibyl geodukt
 do
   assert_contains "docker buildx build --platform linux/amd64 --load --tag $ECR_REGISTRY/$service_name:$TEST_TAG $workspace_directory/$service_name" "$complete_action_log"
 done
+assert_contains "docker buildx build --platform linux/amd64 --load --build-arg VITE_CARTO_API_KEY=test-carto-key --tag $ECR_REGISTRY/viewtopia:$TEST_TAG $workspace_directory/viewtopia" "$complete_action_log"
 assert_contains "docker buildx build --platform linux/amd64 --load --tag $ECR_REGISTRY/geolang-api:$TEST_TAG $workspace_directory/geolang" "$complete_action_log"
 assert_contains "docker buildx build --platform linux/amd64 --load --tag geoplumb-base:$TEST_TAG $workspace_directory/geoplumb" "$complete_action_log"
 assert_contains "docker buildx build --platform linux/amd64 --load --build-arg GEOPLUMB_BASE_IMAGE=geoplumb-base:$TEST_TAG --tag $ECR_REGISTRY/geoplumb:$TEST_TAG $infrastructure_directory/containers/geoplumb" "$complete_action_log"
