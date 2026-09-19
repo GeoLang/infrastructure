@@ -161,9 +161,16 @@ do
     continue
   fi
 
+  extra_build_arguments=()
+  if [[ "$repository_key" == "viewtopia" ]]
+  then
+    extra_build_arguments+=(--build-arg "VITE_CARTO_API_KEY=${VITE_CARTO_API_KEY:-}")
+  fi
+
   docker buildx build \
     --platform "$TARGET_PLATFORM" \
     --load \
+    "${extra_build_arguments[@]}" \
     --tag "$image_reference" \
     "${BUILD_CONTEXTS[$repository_key]}"
 done

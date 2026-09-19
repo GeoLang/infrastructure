@@ -121,7 +121,7 @@ After the first infrastructure apply creates the repositories, publish every ena
 ./scripts/publish-images.sh v0.1.0
 ```
 
-The command reads `ecr_repositories` from Terraform state, rejects any tag that already exists, builds every image for Linux x86_64, then logs in and pushes only after all builds pass. It requires Terraform, the AWS CLI, Docker Buildx, and jq. The tag passed here must also be the Terraform `image_tag` used for the readiness apply.
+The command reads `ecr_repositories` from Terraform state, rejects any tag that already exists, builds every image for Linux x86_64, then logs in and pushes only after all builds pass. Export `VITE_CARTO_API_KEY` first, the ViewTopia build bakes it in and without it the 2D tab's Carto basemaps carry an "API KEY REQUIRED" watermark. It requires Terraform, the AWS CLI, Docker Buildx, and jq. The tag passed here must also be the Terraform `image_tag` used for the readiness apply.
 
 Build these repositories from their existing service contexts:
 
