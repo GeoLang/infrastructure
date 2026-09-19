@@ -1,11 +1,15 @@
 import json
 import os
 import re
+import time
 from urllib.parse import quote
 
 
 WAITER_DELAY_SECONDS = 5
 WAITER_MAX_ATTEMPTS = 45
+RESUME_RETRY_DELAY_SECONDS = 5
+RESUME_RETRY_ATTEMPTS = 24
+sleep = time.sleep
 RDS_CA_BUNDLE_PATH = "/etc/ssl/rds-global-bundle.pem"
 DATABASE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 
@@ -58,14 +62,15 @@ def restore_target_version(
     previous_version_id,
     new_version_id,
 ):
-    update_arguments = {
-        "SecretId": target_secret_arn,
-        "VersionStage": "AWSCURRENT",
-        "RemoveFromVersionId": new_version_id,
-    }
-    if previous_version_id is not None:
-        update_arguments["MoveToVersionId"] = previous_version_id
-    secrets_client.update_secret_version_stage(**update_arguments)
+    # a first write has no version to fall back to, and nothing runs until the readiness apply
+    if previous_version_id is None:
+        return
+    secrets_client.update_secret_version_stage(
+        SecretId=target_secret_arn,
+        VersionStage="AWSCURRENT",
+        RemoveFromVersionId=new_version_id,
+        MoveToVersionId=previous_version_id,
+    )
 
 
 def create_database_if_absent(rds_data_client, target):
@@ -73,7 +78,8 @@ def create_database_if_absent(rds_data_client, target):
     if not DATABASE_NAME_PATTERN.match(database_name):
         raise ValueError(f"database name must match {DATABASE_NAME_PATTERN.pattern}: {database_name}")
 
-    existing = rds_data_client.execute_statement(
+    existing = execute_statement_when_resumed(
+        rds_data_client,
         resourceArn=target["cluster_arn"],
         secretArn=target["source_secret_arn"],
         database=target["admin_database"],
@@ -83,13 +89,25 @@ def create_database_if_absent(rds_data_client, target):
     if existing.get("records"):
         return False
 
-    rds_data_client.execute_statement(
+    execute_statement_when_resumed(
+        rds_data_client,
         resourceArn=target["cluster_arn"],
         secretArn=target["source_secret_arn"],
         database=target["admin_database"],
         sql=f'CREATE DATABASE "{database_name}"',
     )
     return True
+
+
+# a paused cluster answers the first call with DatabaseResumingException and wakes up
+def execute_statement_when_resumed(rds_data_client, **arguments):
+    for attempt in range(1, RESUME_RETRY_ATTEMPTS + 1):
+        try:
+            return rds_data_client.execute_statement(**arguments)
+        except rds_data_client.exceptions.DatabaseResumingException:
+            if attempt == RESUME_RETRY_ATTEMPTS:
+                raise
+            sleep(RESUME_RETRY_DELAY_SECONDS)
 
 
 def refresh_database_secret(target, secrets_client, ecs_client, rds_data_client):

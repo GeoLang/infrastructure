@@ -174,7 +174,7 @@ resource "aws_lambda_function" "database_secret_refresh" {
   filename         = data.archive_file.database_secret_refresh[0].output_path
   source_code_hash = data.archive_file.database_secret_refresh[0].output_base64sha256
 
-  reserved_concurrent_executions = 1
+  # the account's lambda quota is 10 with a floor of 10 unreserved, so no reservation fits
 
   environment {
     variables = {

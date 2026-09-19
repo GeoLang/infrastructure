@@ -50,12 +50,23 @@ class FakeSecretsClient:
         self.stage_calls.append(kwargs)
 
 
+class DatabaseResumingException(Exception):
+    pass
+
+
 class FakeRdsDataClient:
-    def __init__(self, records=None):
+    class exceptions:
+        DatabaseResumingException = DatabaseResumingException
+
+    def __init__(self, records=None, resuming_failures=0):
         self.records = [] if records is None else records
+        self.resuming_failures = resuming_failures
         self.calls = []
 
     def execute_statement(self, **kwargs):
+        if self.resuming_failures > 0:
+            self.resuming_failures -= 1
+            raise self.exceptions.DatabaseResumingException()
         self.calls.append(kwargs)
         if kwargs["sql"].startswith("SELECT"):
             return {"records": self.records}
@@ -249,7 +260,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
         )
         self.assertEqual(ecs_client.waiter.calls, [])
 
-    def test_update_failure_removes_initial_target_current_version(self):
+    def test_update_failure_keeps_initial_target_version(self):
         secrets_client = FakeSecretsClient(
             json.dumps({"username": "ptolemy", "password": "password"}),
             target_missing=True,
@@ -264,15 +275,47 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
                 FakeRdsDataClient(),
             )
 
-        self.assertEqual(
-            secrets_client.stage_calls,
-            [{
-                "SecretId": "target-secret",
-                "VersionStage": "AWSCURRENT",
-                "RemoveFromVersionId": "new-version",
-            }],
-        )
+        self.assertEqual(len(secrets_client.put_calls), 1)
+        self.assertEqual(secrets_client.stage_calls, [])
         self.assertEqual(ecs_client.waiter.calls, [])
+
+    def test_paused_cluster_is_retried_until_resumed(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "password"}),
+            target_missing=True,
+        )
+        rds_data_client = FakeRdsDataClient(records=[], resuming_failures=2)
+        sleeps = []
+        REFRESH_DATABASE_SECRETS.sleep = sleeps.append
+
+        REFRESH_DATABASE_SECRETS.refresh_database_secret(
+            agora_target(),
+            secrets_client,
+            FakeEcsClient(),
+            rds_data_client,
+        )
+
+        self.assertEqual(sleeps, [REFRESH_DATABASE_SECRETS.RESUME_RETRY_DELAY_SECONDS] * 2)
+        self.assertEqual([call["sql"][:6] for call in rds_data_client.calls], ["SELECT", "CREATE"])
+
+    def test_cluster_that_never_resumes_fails(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "password"}),
+            target_missing=True,
+        )
+        attempts = REFRESH_DATABASE_SECRETS.RESUME_RETRY_ATTEMPTS
+        rds_data_client = FakeRdsDataClient(records=[], resuming_failures=attempts)
+        REFRESH_DATABASE_SECRETS.sleep = lambda seconds: None
+
+        with self.assertRaises(DatabaseResumingException):
+            REFRESH_DATABASE_SECRETS.refresh_database_secret(
+                agora_target(),
+                secrets_client,
+                FakeEcsClient(),
+                rds_data_client,
+            )
+
+        self.assertEqual(secrets_client.put_calls, [])
 
     def test_absent_database_is_created(self):
         secrets_client = FakeSecretsClient(

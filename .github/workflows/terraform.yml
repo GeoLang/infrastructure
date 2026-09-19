@@ -19,7 +19,7 @@ on:
 
 env:
   # fmt output is version sensitive, so this tracks the local toolchain
-  TERRAFORM_VERSION: "1.15.8"
+  TERRAFORM_VERSION: "1.16.1"
 
 permissions:
   contents: read
