@@ -167,6 +167,12 @@
 			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
 		}
 
+		# ptolemy's /api/* catch-all below answers 404 for a path whose own service is off
+		@api_undeployed path /api/geocode/* /api/indoor/* /api/delivery/* /api/route /api/route/* /api/isochrone /api/isochrone/* /api/network/* /api/pipeline/runs /api/pipeline/runs/* /api/v1/realtime/* /api/v1/portal/* /api/v1/assets /api/v1/assets/* /api/v1/terrain/* /api/v1/catalog /api/v1/catalog/*
+		handle @api_undeployed {
+			error "this deployment does not run the service that serves this path" 501
+		}
+
 		@ptolemy {
 			expression {$ENABLE_PTOLEMY:false}
 			path /api/* /ws/*
