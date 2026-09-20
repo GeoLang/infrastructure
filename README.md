@@ -212,6 +212,33 @@ Terraform outputs the cluster endpoint, its managed credential secret ARN, runti
 
 Do not use `terraform apply -auto-approve` for the readiness transition. A normal plan makes the service scale-up visible before it changes AWS.
 
+## Redeploying a service after a change
+
+Which path a service takes depends on where its image comes from.
+
+The six ghcr services (Ptolemy, TileTopia, Agora, Sibyl, geodukt, and the GeoLang API and executor from the geolang repo) get a new image from a tag push on their own repo. Each repo's `docker.yml` workflow builds and pushes `ghcr.io/geolang/<repo>:<tag>` on any `v*` tag:
+
+```bash
+git -C ../ptolemy tag v0.2.1
+git -C ../ptolemy push origin v0.2.1
+```
+
+Wait for the workflow to finish, set the new tag on that service in `container_images` in `profiles/preview.tfvars`, then apply:
+
+```bash
+terraform apply -var-file=profiles/preview.tfvars
+```
+
+ViewTopia and the platform proxy are built into ECR by `publish-images.sh`. Export `VITE_CARTO_API_KEY`, publish under a tag no repository holds yet, set `image_tag` to it, then apply:
+
+```bash
+export VITE_CARTO_API_KEY=...
+./scripts/publish-images.sh v0.1.6
+terraform apply -var-file=profiles/preview.tfvars
+```
+
+`image_tag` is one value for both ECR images, so publishing rolls both even when only one changed. Either apply replaces the task definition and ECS rolls the service. Do not apply near 23:00 America/Toronto, the nightly scale-down fires on the schedule regardless of a rollout in flight.
+
 ## Scaling the preview up and down
 
 Once the services are running, the cost of an idle stack is the load balancer, the CloudFront distribution, EFS, and whatever the tasks burn. `scripts/platform-scale.sh` sets every service on the cluster to a desired count of 0 or 1 without a Terraform run:
