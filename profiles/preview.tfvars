@@ -70,7 +70,7 @@ runtime_secrets_ready = true
 # ── Images ───────────────────────────────────────────────────────
 # Everything already published to ghcr comes from there. Only viewtopia and the
 # platform proxy are built into ECR, so only those two get a repository.
-image_tag = "v0.1.4"
+image_tag = "v0.1.5"
 
 container_images = {
   ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.0"
@@ -78,7 +78,7 @@ container_images = {
   agora       = "ghcr.io/geolang/agora:v0.1.0"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.0"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.2"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.3"
 }
 
 # ── Sibyl model access ───────────────────────────────────────────
