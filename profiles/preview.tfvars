@@ -107,6 +107,6 @@ service_overrides = {
   }
   geolang-executor = {
     cpu    = 2048
-    memory = 4096
+    memory = 8192
   }
 }

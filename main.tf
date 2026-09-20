@@ -543,6 +543,9 @@ module "ecs" {
         runs_untrusted_code  = true
         environment = [
           { name = "TOOL_EXEC_DIR", value = "/app/geolang" },
+          { name = "GEOLANG_TOOL_MEMORY_LIMIT_MB", value = "3072" },
+          { name = "GEOLANG_TOOL_TIMEOUT_SECONDS", value = "840" },
+          { name = "GEOLANG_TOOL_MAX_CONCURRENT", value = "2" },
           { name = "PTOLEMY_URL", value = "http://ptolemy.${local.sd_suffix}:3000" },
           { name = "TILETOPIA_URL", value = "http://tiletopia.${local.sd_suffix}:3000" },
           { name = "GEOKODE_URL", value = "http://geokode.${local.sd_suffix}:3000" },

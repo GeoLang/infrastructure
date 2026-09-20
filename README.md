@@ -32,6 +32,8 @@ Terraform does not build images, populate secret values, load spatial data, crea
 
 Six images come from ghcr and are named in `container_images`: `ptolemy:v0.2.0`, `tiletopia:v0.4.0`, `agora:v0.1.0`, `sibyl:v0.1.0`, `geodukt:v0.2.0`, and `geolang:v0.1.0` for both the GeoLang API and the executor. A service named in `container_images` gets no ECR repository, so the preview creates two repositories, ViewTopia and the platform proxy, and `publish-images.sh` builds only those two from the sibling checkouts. The ViewTopia ghcr image cannot start on Fargate, because its nginx resolves a `tiletopia` upstream at startup.
 
+The GeoLang executor takes 2048 CPU units and 8192 MiB, which covers the two tool runs it allows at once at 3072 MiB each. Its task definition spells out all three limits instead of leaving them to the image: `GEOLANG_TOOL_MEMORY_LIMIT_MB` 3072, `GEOLANG_TOOL_MAX_CONCURRENT` 2, and `GEOLANG_TOOL_TIMEOUT_SECONDS` 840.
+
 Three things keep the idle cost near zero. Tasks run on Fargate Spot with `use_fargate_spot`. They sit in the public subnets with a public IP each, so there is no NAT gateway, and a task's public address costs the same 0.005 USD per hour that one NAT gateway costs across nine tasks. The Aurora cluster scales to zero.
 
 CloudFront sends requests to an Application Load Balancer. The load balancer has one catch-all target, the platform proxy. The proxy resolves private ECS services through Cloud Map. Its rewrites are close to `viewtopia/deploy/nginx-platform.conf` but not identical, so use the routing list below as the contract rather than the compose config.
