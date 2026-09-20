@@ -64,6 +64,24 @@ It refuses any database, role, or master user name outside `^[a-z_][a-z0-9_]*$`.
 
 The live preview predates the role. Its `agora` database was created with the master credential and its URL still names the master user, so the first Lambda run after this deploys is the run that moves it across and redeploys Agora once. There is no operator step.
 
+To test a rotation end to end, force one and watch both services come back. The managed secret takes a minute or two to hold the new password, and the Lambda's schedule would pick it up within 15 minutes anyway, so the invoke below only saves the wait. It runs for as long as the ECS deployment takes:
+
+```bash
+aws rds modify-db-cluster --profile geolang --db-cluster-identifier geolang-prod-postgis \
+  --rotate-master-user-password --apply-immediately
+
+aws lambda invoke --profile geolang --cli-read-timeout 0 \
+  --function-name geolang-prod-database-secret-refresh /dev/stdout
+
+aws ecs wait services-stable --profile geolang --cluster geolang-prod \
+  --services geolang-prod-ptolemy geolang-prod-agora
+
+curl -si https://d2dkw27j378mpo.cloudfront.net/api/v1/healthz | head -1
+curl -si https://d2dkw27j378mpo.cloudfront.net/agora/health | head -1
+```
+
+The invoke prints one entry per target. Ptolemy's reads `"changed": true` and Agora's reads `"changed": false`, because only Ptolemy's URL carries the master password. A `false` for Ptolemy means the rotation has not reached the managed secret yet, so invoke again. Both health routes answer `200`.
+
 EFS access points provide persistent storage for:
 
 - TileTopia data
@@ -116,6 +134,8 @@ There is no deployment-time place to configure the Jupyter token for ViewTopia. 
 One token also means one shared credential to a server that runs arbitrary code as whoever holds it. Anyone given the token has the same access as everyone else, and revoking it means rotating the secret and telling every user to paste a new one.
 
 Sibyl's model endpoint is two plain variables next to that key. `llm_api_base` becomes `SIBYL_CLOUD_API_BASE` and `llm_models` becomes `SIBYL_CLOUD_MODELS`, and each is left off the task when empty. The preview profile points at the Bedrock mantle endpoint, `https://bedrock-mantle.us-east-1.api.aws/v1`, which serves `GET /models`, streams, and returns `tool_calls`. The `bedrock-runtime` OpenAI path refuses this account on a daily token quota. Only the key itself is a secret.
+
+That key is a long-term Bedrock credential on the IAM user `geolang-sibyl-bedrock`, created on 2026-09-19 and expiring on 2027-09-19. Nothing rotates it. Create a replacement before that date, put it with `./scripts/put-runtime-secret.sh llm_api_key`, and force a new Sibyl deployment, since a task reads the secret only at start. `aws iam list-service-specific-credentials --user-name geolang-sibyl-bedrock --profile geolang` prints the expiry.
 
 ## Image build map
 
@@ -183,7 +203,7 @@ After the apply that creates the load balancer:
 
 1. Run `./scripts/publish-images.sh <image_tag>` to build and push every enabled ECR image.
 2. Stage the required files in EFS.
-3. Populate the operator-managed runtime secrets and wait for the database refresh job to create the `agora` database and both URL secret versions.
+3. Populate the operator-managed runtime secrets and wait for the database refresh job to create the `agora` role and database and both URL secret versions.
 4. Distribute the Jupyter token to the people who need notebooks, on a profile that runs it. There is nothing to configure at deploy time, because each user pastes the token into ViewTopia's notebook settings in their own browser.
 5. Set `runtime_secrets_ready = true`.
 6. Review a new plan before applying it.
@@ -274,7 +294,7 @@ terraform init -backend=false
 terraform validate
 ```
 
-The GitHub workflow runs the same format and validation checks with Terraform 1.15.8, since `fmt` output tracks the toolchain version. `-backend=false` keeps that job away from the state bucket. Its manual plan job runs a real `terraform init` and needs AWS credentials, both for the bucket and because `terraform plan` reads account and region data sources. It takes a long-lived access key pair from the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets, not an OIDC role that mints a short-lived one. No runtime application credential is passed to Terraform.
+The GitHub workflow runs the same format and validation checks with Terraform 1.16.1, since `fmt` output tracks the toolchain version. `-backend=false` keeps that job away from the state bucket. Its manual plan job runs a real `terraform init` and needs AWS credentials, both for the bucket and because `terraform plan` reads account and region data sources. It takes a long-lived access key pair from the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets, not an OIDC role that mints a short-lived one. No runtime application credential is passed to Terraform.
 
 The three shell commands and the refresh Lambda have their own tests, which stub the AWS CLI, Docker, and Terraform and so contact nothing:
 
