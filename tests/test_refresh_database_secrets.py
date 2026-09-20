@@ -303,7 +303,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
         self.assertEqual(sleeps, [REFRESH_DATABASE_SECRETS.RESUME_RETRY_DELAY_SECONDS] * 2)
         self.assertEqual(
             [call["sql"].split()[0] for call in rds_data_client.calls],
-            ["SELECT", "SELECT", "CREATE", "CREATE", "REASSIGN"],
+            ["SELECT", "SELECT", "CREATE", "GRANT", "CREATE", "REASSIGN"],
         )
 
     def test_cluster_that_never_resumes_fails(self):
@@ -339,7 +339,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             rds_data_client,
         )
 
-        self.assertEqual(len(rds_data_client.calls), 5)
+        self.assertEqual(len(rds_data_client.calls), 6)
         self.assertEqual(
             rds_data_client.calls[0],
             {
@@ -352,11 +352,15 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
         )
         self.assertEqual(
             rds_data_client.calls[3]["sql"],
-            'CREATE DATABASE "agora" OWNER "agora"',
+            'GRANT "agora" TO "ptolemy" WITH INHERIT TRUE',
         )
-        self.assertEqual(rds_data_client.calls[4]["database"], "agora")
         self.assertEqual(
             rds_data_client.calls[4]["sql"],
+            'CREATE DATABASE "agora" OWNER "agora"',
+        )
+        self.assertEqual(rds_data_client.calls[5]["database"], "agora")
+        self.assertEqual(
+            rds_data_client.calls[5]["sql"],
             'REASSIGN OWNED BY "ptolemy" TO "agora"',
         )
 
@@ -385,15 +389,19 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
         self.assertEqual(result, {"name": "agora", "changed": True})
         self.assertEqual(
             [call["sql"].split()[0] for call in rds_data_client.calls],
-            ["SELECT", "SELECT", "CREATE", "ALTER", "REASSIGN"],
+            ["SELECT", "SELECT", "CREATE", "GRANT", "ALTER", "REASSIGN"],
         )
         self.assertEqual(
             rds_data_client.calls[3]["sql"],
-            'ALTER DATABASE "agora" OWNER TO "agora"',
+            'GRANT "agora" TO "ptolemy" WITH INHERIT TRUE',
         )
-        self.assertEqual(rds_data_client.calls[4]["database"], "agora")
         self.assertEqual(
             rds_data_client.calls[4]["sql"],
+            'ALTER DATABASE "agora" OWNER TO "agora"',
+        )
+        self.assertEqual(rds_data_client.calls[5]["database"], "agora")
+        self.assertEqual(
+            rds_data_client.calls[5]["sql"],
             'REASSIGN OWNED BY "ptolemy" TO "agora"',
         )
         role_password = rds_data_client.calls[2]["sql"].split("PASSWORD '")[1].rstrip("'")

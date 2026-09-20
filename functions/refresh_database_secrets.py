@@ -143,6 +143,12 @@ def hand_database_to_role(rds_data_client, target, master_username, role_passwor
 
     database_present = database_is_present(rds_data_client, target)
     create_login_role(rds_data_client, target, role_password)
+    # the creator's automatic membership does not inherit, which REASSIGN OWNED needs
+    run_statement(
+        rds_data_client,
+        target,
+        f'GRANT "{role_name}" TO "{master_username}" WITH INHERIT TRUE',
+    )
     if database_present:
         run_statement(rds_data_client, target, f'ALTER DATABASE "{database_name}" OWNER TO "{role_name}"')
     else:
