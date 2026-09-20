@@ -44,7 +44,7 @@ The Jupyter image is pinned to `quay.io/jupyter/scipy-notebook:2025-12-31`. That
 
 ## Databases and storage
 
-Ptolemy and Agora share one encrypted Aurora PostgreSQL 17.10 cluster with a single `db.serverless` writer. The cluster holds two databases, `ptolemy` and `agora`, and both services connect with the same RDS-managed master credential, exactly as the compose stack does. RDS manages that password in Secrets Manager. Ptolemy enables its required PostGIS extensions during its own migrations.
+Ptolemy and Agora share one encrypted Aurora PostgreSQL 17.10 cluster with a single `db.serverless` writer. The cluster holds two databases, `ptolemy` and `agora`. Ptolemy connects with the RDS-managed master credential, which RDS keeps in Secrets Manager. Agora connects as an `agora` login role that owns the `agora` database, so its migrations create schema without the master password. Ptolemy enables its required PostGIS extensions during its own migrations.
 
 `serverlessv2_scaling_configuration` runs from 0 to `db_max_capacity` ACUs and pauses the cluster after 300 seconds without a connection. Pausing only happens while the tasks are scaled to zero. Ptolemy's delivery worker polls every 5 seconds and Agora's watch scheduler every 30, so one running task of either keeps the cluster awake. Ptolemy's ECS health check uses `/api/v1/healthz` rather than `/api/v1/readyz` for the same reason: `readyz` runs `SELECT 1` every 30 seconds.
 
@@ -54,7 +54,13 @@ Do not use `sslmode=require` here. Under `require`, sqlx installs a certificate 
 
 The URL must name the RDS endpoint directly, since a CNAME in front of it fails hostname verification. Each service image fetches the AWS RDS global CA bundle to the path above during its build.
 
-Terraform does not create the `agora` database, because that would put a database administrator credential in configuration and state. The refresh Lambda creates it instead, through the RDS Data API, which the cluster exposes with `enable_http_endpoint`. On the one run where Agora's runtime URL secret still has no value, the Lambda asks `pg_database` for the name and issues `CREATE DATABASE` when it is absent. It refuses any name outside `^[a-z_][a-z0-9_]*$`. Once the secret holds a value the Lambda makes no Data API call at all, since any such call resumes a paused cluster and the schedule runs every 15 minutes.
+Terraform creates neither the `agora` database nor the `agora` role, because that would put a database administrator credential in configuration and state. The refresh Lambda creates both, through the RDS Data API, which the cluster exposes with `enable_http_endpoint`.
+
+The username in `agora_database_url` tells the Lambda what to do. When it already reads `agora` there is nothing to do, and the Lambda makes no Data API call at all, which matters because any such call resumes a paused cluster and the schedule runs every 15 minutes. When the secret is empty or its username is still the master user, the Lambda generates a 32-byte password, creates the `agora` role with it or resets the password of an existing one, creates the database owned by that role or hands an existing database over with `ALTER DATABASE ... OWNER TO`, runs `REASSIGN OWNED` inside it so the tables Agora's migrations created as the master user become the role's, then writes the URL and forces one Agora deployment. Every rerun takes the same path until the write lands, so a failure part way through costs nothing but a repeat.
+
+It refuses any database, role, or master user name outside `^[a-z_][a-z0-9_]*$`. The password reaches the `agora_database_url` secret and nothing else: it is not in Terraform configuration or state, not in a process argument, not in a log, and not in CloudTrail, which records `sql` as `**********` for Data API calls.
+
+The live preview predates the role. Its `agora` database was created with the master credential and its URL still names the master user, so the first Lambda run after this deploys is the run that moves it across and redeploys Agora once. There is no operator step.
 
 EFS access points provide persistent storage for:
 
@@ -95,9 +101,9 @@ Terraform deliberately creates no secret versions. Populate the four operator-ma
 ./scripts/put-runtime-secret.sh jupyter_token
 ```
 
-Do not use this command for the two database URLs. When `enable_database_secret_refresh` is true, Terraform deploys a Python 3.13 Lambda and an EventBridge schedule for those values. Every 15 minutes it reads the RDS-managed credentials, builds the verified direct-endpoint URL, updates a changed runtime URL secret, forces the matching ECS service to deploy new tasks, and waits for the service to stabilize. A failed ECS update restores the previous secret version so the next schedule retries. No password enters Terraform configuration, state, process arguments, or logs.
+Do not use this command for the two database URLs. When `enable_database_secret_refresh` is true, Terraform deploys a Python 3.13 Lambda and an EventBridge schedule for those values. Every 15 minutes it reads the RDS-managed credentials, builds Ptolemy's verified direct-endpoint URL, updates the secret if it changed, forces Ptolemy's ECS service to deploy new tasks, and waits for the service to stabilize. A failed ECS update restores the previous secret version so the next schedule retries. No password enters Terraform configuration, state, process arguments, or logs.
 
-The first scheduled run creates the `agora` database and both URL secret versions. RDS rotates each managed master password every seven days by default. After a rotation, new database connections can fail until the next scheduled run and ECS replacement complete. A live rotation test remains required before public use.
+The first scheduled run creates the `agora` role and database and writes both URL secret versions. From then on the Lambda only rewrites Ptolemy's URL. RDS rotates the managed master password every seven days by default, so new Ptolemy connections can fail between a rotation and the next run. Agora's URL keeps the `agora` role's password, which no rotation touches, so a master rotation no longer redeploys Agora.
 
 Existing secret resources can be supplied through `runtime_secret_arns`. Keys in that map override Terraform-managed secret ARNs. The two database URL targets must be full Secrets Manager ARNs when automatic refresh is enabled. Other runtime values may use Secrets Manager or SSM. If an existing secret uses a customer managed KMS key, grant the ECS execution role permission to decrypt it. The refresh Lambda has no wildcard KMS permission, so a customer managed key for either database secret needs an explicit policy change before use.
 

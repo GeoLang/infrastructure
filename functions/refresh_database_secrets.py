@@ -1,8 +1,9 @@
 import json
 import os
 import re
+import secrets
 import time
-from urllib.parse import quote
+from urllib.parse import quote, unquote, urlsplit
 
 
 WAITER_DELAY_SECONDS = 5
@@ -11,7 +12,8 @@ RESUME_RETRY_DELAY_SECONDS = 5
 RESUME_RETRY_ATTEMPTS = 24
 sleep = time.sleep
 RDS_CA_BUNDLE_PATH = "/etc/ssl/rds-global-bundle.pem"
-DATABASE_NAME_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
+POSTGRES_IDENTIFIER_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
+ROLE_PASSWORD_BYTES = 32
 
 
 def build_database_url(username, password, host, port, database_name):
@@ -73,30 +75,86 @@ def restore_target_version(
     )
 
 
-def create_database_if_absent(rds_data_client, target):
-    database_name = target["database_name"]
-    if not DATABASE_NAME_PATTERN.match(database_name):
-        raise ValueError(f"database name must match {DATABASE_NAME_PATTERN.pattern}: {database_name}")
+def target_is_on_its_role(target, current_target):
+    role_name = target.get("role_name", "")
+    if not role_name or current_target is None:
+        return False
+    return unquote(urlsplit(current_target["SecretString"]).username or "") == role_name
 
-    existing = execute_statement_when_resumed(
+
+def validate_identifier(kind, value):
+    if not POSTGRES_IDENTIFIER_PATTERN.match(value):
+        raise ValueError(f"{kind} must match {POSTGRES_IDENTIFIER_PATTERN.pattern}: {value}")
+
+
+def run_statement(rds_data_client, target, sql, database=None, parameters=None):
+    arguments = {
+        "resourceArn": target["cluster_arn"],
+        "secretArn": target["source_secret_arn"],
+        "database": database or target["admin_database"],
+        "sql": sql,
+    }
+    if parameters is not None:
+        arguments["parameters"] = parameters
+    return execute_statement_when_resumed(rds_data_client, **arguments)
+
+
+def database_is_present(rds_data_client, target):
+    database_name = target["database_name"]
+    validate_identifier("database name", database_name)
+    existing = run_statement(
         rds_data_client,
-        resourceArn=target["cluster_arn"],
-        secretArn=target["source_secret_arn"],
-        database=target["admin_database"],
-        sql="SELECT 1 FROM pg_database WHERE datname = :name",
+        target,
+        "SELECT 1 FROM pg_database WHERE datname = :name",
         parameters=[{"name": "name", "value": {"stringValue": database_name}}],
     )
-    if existing.get("records"):
-        return False
+    return bool(existing.get("records"))
 
-    execute_statement_when_resumed(
+
+def create_database_if_absent(rds_data_client, target):
+    if database_is_present(rds_data_client, target):
+        return
+    run_statement(rds_data_client, target, f'CREATE DATABASE "{target["database_name"]}"')
+
+
+def create_login_role(rds_data_client, target, password):
+    role_name = target["role_name"]
+    validate_identifier("role name", role_name)
+    existing = run_statement(
         rds_data_client,
-        resourceArn=target["cluster_arn"],
-        secretArn=target["source_secret_arn"],
-        database=target["admin_database"],
-        sql=f'CREATE DATABASE "{database_name}"',
+        target,
+        "SELECT 1 FROM pg_roles WHERE rolname = :name",
+        parameters=[{"name": "name", "value": {"stringValue": role_name}}],
     )
-    return True
+    action = "ALTER" if existing.get("records") else "CREATE"
+
+    # token_urlsafe emits only letters, digits, hyphen and underscore, so the literal needs no escaping
+    run_statement(
+        rds_data_client,
+        target,
+        f"{action} ROLE \"{role_name}\" WITH LOGIN PASSWORD '{password}'",
+    )
+
+
+def hand_database_to_role(rds_data_client, target, master_username, role_password):
+    validate_identifier("master username", master_username)
+    database_name = target["database_name"]
+    role_name = target["role_name"]
+
+    database_present = database_is_present(rds_data_client, target)
+    create_login_role(rds_data_client, target, role_password)
+    if database_present:
+        run_statement(rds_data_client, target, f'ALTER DATABASE "{database_name}" OWNER TO "{role_name}"')
+    else:
+        run_statement(rds_data_client, target, f'CREATE DATABASE "{database_name}" OWNER "{role_name}"')
+
+    # tables the master user created before the role existed still belong to it
+    run_statement(
+        rds_data_client,
+        target,
+        f'REASSIGN OWNED BY "{master_username}" TO "{role_name}"',
+        database=database_name,
+    )
 
 
 # a paused cluster answers the first call with DatabaseResumingException and wakes up
@@ -111,7 +169,21 @@ def execute_statement_when_resumed(rds_data_client, **arguments):
 
 
 def refresh_database_secret(target, secrets_client, ecs_client, rds_data_client):
-    username, password = read_source_credentials(secrets_client, target["source_secret_arn"])
+    current_target = read_target_secret(secrets_client, target["target_secret_arn"])
+    role_name = target.get("role_name", "")
+
+    # the role password never changes with the master password, so its URL stays valid
+    if target_is_on_its_role(target, current_target):
+        return {"name": target["name"], "changed": False}
+
+    master_username, master_password = read_source_credentials(secrets_client, target["source_secret_arn"])
+    if role_name:
+        username = role_name
+        password = secrets.token_urlsafe(ROLE_PASSWORD_BYTES)
+    else:
+        username = master_username
+        password = master_password
+
     database_url = build_database_url(
         username,
         password,
@@ -119,12 +191,13 @@ def refresh_database_secret(target, secrets_client, ecs_client, rds_data_client)
         target["port"],
         target["database_name"],
     )
-    current_target = read_target_secret(secrets_client, target["target_secret_arn"])
     if current_target is not None and current_target["SecretString"] == database_url:
         return {"name": target["name"], "changed": False}
 
-    # a Data API call resumes a paused cluster, so only the first run may make one
-    if current_target is None and target.get("cluster_arn"):
+    # a Data API call resumes a paused cluster, so a target that is already on its role never reaches one
+    if role_name:
+        hand_database_to_role(rds_data_client, target, master_username, password)
+    elif current_target is None and target.get("cluster_arn"):
         create_database_if_absent(rds_data_client, target)
 
     put_response = secrets_client.put_secret_value(

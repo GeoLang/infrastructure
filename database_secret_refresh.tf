@@ -11,6 +11,7 @@ locals {
         host              = module.database[0].address
         port              = module.database[0].port
         database_name     = var.db_name
+        role_name         = ""
         cluster_arn       = ""
         admin_database    = ""
         cluster_name      = module.ecs.cluster_name
@@ -25,6 +26,7 @@ locals {
         host              = module.database[0].address
         port              = module.database[0].port
         database_name     = "agora"
+        role_name         = "agora"
         cluster_arn       = module.database[0].arn
         admin_database    = var.db_name
         cluster_name      = module.ecs.cluster_name
