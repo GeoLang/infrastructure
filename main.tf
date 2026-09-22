@@ -300,7 +300,7 @@ module "ecs" {
         ]
         secrets = concat(
           contains(keys(local.runtime_secret_arns), "ptolemy_database_url") ? [{ name = "DATABASE_URL", valueFrom = local.runtime_secret_arns["ptolemy_database_url"] }] : [],
-          contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PTOLEMY_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
+          contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
         )
       }
     } : {},
