@@ -73,12 +73,12 @@ runtime_secrets_ready = true
 image_tag = "v0.1.5"
 
 container_images = {
-  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.0"
+  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.1"
   tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.0"
   agora       = "ghcr.io/geolang/agora:v0.1.0"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.0"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.3"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.4"
 }
 
 # ── Sibyl model access ───────────────────────────────────────────
