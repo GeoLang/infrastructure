@@ -261,7 +261,9 @@ Once the services are running, the cost of an idle stack is the load balancer, t
 
 It reads the cluster name from `terraform output -raw ecs_cluster`, lists the cluster's services, and prints one line per service. It accepts nothing but `up`, `down`, and an optional `--profile`.
 
-`nightly_scale_down` does the down half on a schedule. Set a timezone and an hour and each service gets an EventBridge schedule that calls `ecs:UpdateService` with a desired count of 0 at that local hour. The preview profile uses 23:00 America/Toronto. The tasks stop, the cluster pauses five minutes later, and `platform-scale.sh up` or a Terraform apply brings both back. There is no scale-up schedule, so a manual scale-down before an absence stays down.
+`nightly_scale_down` does the down half on a schedule. Set a timezone and an hour and each service gets an EventBridge schedule that calls `ecs:UpdateService` with a desired count of 0 at that local hour. The preview profile uses 23:00 America/Toronto. The tasks stop, the cluster pauses five minutes later, and `platform-scale.sh up` or a Terraform apply brings both back.
+
+A second schedule per service does the up half at `morning_scale_up_hour` in the same timezone, 08:00 by default, so the preview runs from 08:00 to 23:00 Toronto time. It sets the desired count Terraform gives the service, which is 0 while `runtime_secrets_ready` is false. The morning schedule also undoes a manual scale-down, so before an absence set `nightly_scale_down = null` and apply to drop both schedules.
 
 ## Routing
 

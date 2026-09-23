@@ -200,6 +200,17 @@ variable "nightly_scale_down" {
   }
 }
 
+variable "morning_scale_up_hour" {
+  description = "Start every ECS service daily at this hour in the nightly_scale_down timezone"
+  type        = number
+  default     = 8
+
+  validation {
+    condition     = var.morning_scale_up_hour >= 0 && var.morning_scale_up_hour <= 23 && var.morning_scale_up_hour != try(var.nightly_scale_down.hour, null)
+    error_message = "morning_scale_up_hour must be between 0 and 23 and differ from nightly_scale_down.hour."
+  }
+}
+
 variable "use_fargate_spot" {
   description = "Run every ECS task on Fargate Spot"
   type        = bool

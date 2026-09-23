@@ -1,6 +1,11 @@
 locals {
   nightly_scale_down_enabled = var.nightly_scale_down != null
 
+  running_desired_counts = {
+    for service, service_name in module.ecs.service_names :
+    service_name => var.runtime_secrets_ready ? local.service_sizing[service].desired_count : 0
+  }
+
   nightly_scale_down_service_arns = [
     for service_name in values(module.ecs.service_names) :
     "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${module.ecs.cluster_name}/${service_name}"
@@ -67,6 +72,29 @@ resource "aws_scheduler_schedule" "nightly_scale_down" {
       Cluster      = module.ecs.cluster_name
       Service      = each.value
       DesiredCount = 0
+    })
+  }
+}
+
+resource "aws_scheduler_schedule" "morning_scale_up" {
+  for_each = local.nightly_scale_down_enabled ? module.ecs.service_names : {}
+
+  name                         = "${local.name_prefix}-${each.key}-morning-scale-up"
+  schedule_expression          = "cron(0 ${var.morning_scale_up_hour} * * ? *)"
+  schedule_expression_timezone = var.nightly_scale_down.timezone
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = "arn:${data.aws_partition.current.partition}:scheduler:::aws-sdk:ecs:updateService"
+    role_arn = aws_iam_role.nightly_scale_down[0].arn
+
+    input = jsonencode({
+      Cluster      = module.ecs.cluster_name
+      Service      = each.value
+      DesiredCount = local.running_desired_counts[each.value]
     })
   }
 }
