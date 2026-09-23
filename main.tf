@@ -599,6 +599,7 @@ module "ecs" {
           var.enable_geolang_executor ? [{ name = "GEOLANG_EXECUTOR_URL", value = "http://geolang-executor.${local.sd_suffix}:8081" }] : [],
           var.geolang_chat_runs_per_day > 0 ? [{ name = "GEOLANG_CHAT_RUNS_PER_DAY", value = tostring(var.geolang_chat_runs_per_day) }] : [],
           var.geolang_chat_runs_per_caller_per_day > 0 ? [{ name = "GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY", value = tostring(var.geolang_chat_runs_per_caller_per_day) }] : [],
+          [for name, value in var.geolang_upload_limits : { name = name, value = tostring(value) } if value > 0],
         )
         secrets = concat(
           contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],

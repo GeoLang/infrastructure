@@ -300,6 +300,17 @@ variable "geolang_chat_runs_per_caller_per_day" {
   }
 }
 
+variable "geolang_upload_limits" {
+  description = "GEOLANG_UPLOAD_* caps passed to geolang-api by name, whole numbers, 0 or a missing key means no limit"
+  type        = map(number)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for name, value in var.geolang_upload_limits : startswith(name, "GEOLANG_UPLOAD_") && value >= 0 && floor(value) == value])
+    error_message = "geolang_upload_limits keys must start with GEOLANG_UPLOAD_ and values must be whole numbers, 0 or more."
+  }
+}
+
 variable "jupyter_image" {
   description = "Pinned Jupyter Docker Stacks image"
   type        = string

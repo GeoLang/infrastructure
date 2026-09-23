@@ -80,7 +80,7 @@ container_images = {
   agora       = "ghcr.io/geolang/agora:v0.1.0"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.0"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.4"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.7"
 }
 
 # ── Sibyl model access ───────────────────────────────────────────
@@ -91,6 +91,18 @@ llm_models   = "openai.gpt-oss-120b,qwen.qwen3-235b-a22b-2507"
 # signup is open, so the global cap is the real ceiling
 geolang_chat_runs_per_day            = 300
 geolang_chat_runs_per_caller_per_day = 40
+
+# ── Upload caps ──────────────────────────────────────────────────
+geolang_upload_limits = {
+  GEOLANG_UPLOAD_MAX_REQUEST_MEGABYTES        = 51
+  GEOLANG_UPLOAD_MAX_FILE_MEGABYTES           = 50
+  GEOLANG_UPLOAD_MAX_ZIP_ENTRIES              = 100
+  GEOLANG_UPLOAD_MAX_UNZIPPED_MEGABYTES       = 200
+  GEOLANG_UPLOAD_FILES_PER_DAY                = 300
+  GEOLANG_UPLOAD_FILES_PER_CALLER_PER_DAY     = 20
+  GEOLANG_UPLOAD_MEGABYTES_PER_DAY            = 2048
+  GEOLANG_UPLOAD_MEGABYTES_PER_CALLER_PER_DAY = 200
+}
 
 # ── Sizing ───────────────────────────────────────────────────────
 service_defaults = {

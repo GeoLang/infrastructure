@@ -148,6 +148,8 @@ That key is a long-term Bedrock credential on the IAM user `geolang-sibyl-bedroc
 
 `geolang_chat_runs_per_day` and `geolang_chat_runs_per_caller_per_day` become `GEOLANG_CHAT_RUNS_PER_DAY` and `GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY` on geolang-api, and each is left off the task when 0. The preview profile sets 300 and 40. geolang-api keeps the counts in memory, so they hold only while it runs as one task, and a new deployment resets them.
 
+`geolang_upload_limits` is a map of `GEOLANG_UPLOAD_*` names to whole numbers, each passed to geolang-api as an environment variable and left off when 0. The names and their meaning are in the geolang README. The preview profile caps a request at 51 MB, a file at 50 MB, a zip at 100 entries and 200 MB unzipped, and a day at 300 files or 2048 MB overall and 20 files or 200 MB per caller.
+
 ## Image build map
 
 Terraform creates ECR repositories but does not build or push images. Use the repository URLs from `terraform output -json ecr_repositories`.
