@@ -487,6 +487,10 @@ module "ecs" {
           ],
           var.llm_api_base != "" ? [{ name = "SIBYL_CLOUD_API_BASE", value = var.llm_api_base }] : [],
           var.llm_models != "" ? [{ name = "SIBYL_CLOUD_MODELS", value = var.llm_models }] : [],
+          var.llm_monthly_spend_limit_usd > 0 ? [
+            { name = "SIBYL_MONTHLY_SPEND_LIMIT_USD", value = tostring(var.llm_monthly_spend_limit_usd) },
+            { name = "SIBYL_MODEL_PRICES", value = var.llm_model_prices },
+          ] : [],
         )
         secrets = concat(
           contains(keys(local.runtime_secret_arns), "llm_api_key") ? [{ name = "SIBYL_CLOUD_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] }] : [],

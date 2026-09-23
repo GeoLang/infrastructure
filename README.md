@@ -146,6 +146,22 @@ Sibyl's model endpoint is two plain variables next to that key. `llm_api_base` b
 
 That key is a long-term Bedrock credential on the IAM user `geolang-sibyl-bedrock`, and it expires on 2027-09-19. Nothing rotates it. Create a replacement before that date, put it with `./scripts/put-runtime-secret.sh llm_api_key`, and force a new Sibyl deployment, since a task reads the secret only at start. `aws iam list-service-specific-credentials --user-name geolang-sibyl-bedrock --profile geolang` prints the expiry.
 
+### Monthly spend cap
+
+Two limits hold the preview to 100 USD a month. `llm_monthly_spend_limit_usd` and `llm_model_prices` become `SIBYL_MONTHLY_SPEND_LIMIT_USD` and `SIBYL_MODEL_PRICES`, and Sibyl refuses model calls once that many dollars are spent in a UTC month. The preview sets 50, and every model in `llm_models` needs a price. Take prices from the AWS price list:
+
+```bash
+aws pricing get-products --region us-east-1 --service-code AmazonBedrock --filters Type=TERM_MATCH,Field=regionCode,Value=us-east-1 --profile geolang
+```
+
+`monthly_spend_budget_usd` creates an AWS cost budget that leaves credits out. It emails at 80 percent, and at 100 percent it attaches a deny on `bedrock:*` and `bedrock-mantle:*` to `bedrock_api_key_user`, which stops every Sibyl model call. Budgets data arrives 8 to 12 hours late, so spend overshoots before the deny lands. The deny leaves ECS, RDS and EFS running. It stays on until someone detaches it, either in the Budgets console or with `aws iam detach-user-policy --user-name geolang-sibyl-bedrock --policy-arn <deny-model-calls arn> --profile geolang`.
+
+Both alerts go to the `spend_cap_topic_arn` output. Subscribe once after the first apply, then confirm the email:
+
+```bash
+aws sns subscribe --topic-arn "$(terraform output -raw spend_cap_topic_arn)" --protocol email --notification-endpoint <you@example.com> --profile geolang
+```
+
 `geolang_chat_runs_per_day` and `geolang_chat_runs_per_caller_per_day` become `GEOLANG_CHAT_RUNS_PER_DAY` and `GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY` on geolang-api, and each is left off the task when 0. The preview profile sets 300 and 40. geolang-api keeps the counts in memory, so they hold only while it runs as one task, and a new deployment resets them.
 
 `geolang_upload_limits` is a map of `GEOLANG_UPLOAD_*` names to whole numbers, each passed to geolang-api as an environment variable and left off when 0. The names and their meaning are in the geolang README. The preview profile caps a request at 51 MB, a file at 50 MB, a zip at 100 entries and 200 MB unzipped, and a day at 300 files or 2048 MB overall and 20 files or 200 MB per caller.

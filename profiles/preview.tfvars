@@ -78,7 +78,7 @@ container_images = {
   ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.1"
   tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.0"
   agora       = "ghcr.io/geolang/agora:v0.1.0"
-  sibyl       = "ghcr.io/geolang/sibyl:v0.1.0"
+  sibyl       = "ghcr.io/geolang/sibyl:v0.1.1"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
   geolang-api = "ghcr.io/geolang/geolang:v0.1.7"
 }
@@ -86,6 +86,13 @@ container_images = {
 # ── Sibyl model access ───────────────────────────────────────────
 llm_api_base = "https://bedrock-mantle.us-east-1.api.aws/v1"
 llm_models   = "openai.gpt-oss-120b,qwen.qwen3-235b-a22b-2507"
+
+# ── Spend caps ───────────────────────────────────────────────────
+# USD per million tokens from the us-east-1 price list, 2026-09-23
+llm_monthly_spend_limit_usd = 50
+llm_model_prices            = "openai.gpt-oss-120b=0.15/0.60,qwen.qwen3-235b-a22b-2507=0.22/0.88"
+monthly_spend_budget_usd    = 100
+bedrock_api_key_user        = "geolang-sibyl-bedrock"
 
 # ── Chat spend caps ──────────────────────────────────────────────
 # signup is open, so the global cap is the real ceiling

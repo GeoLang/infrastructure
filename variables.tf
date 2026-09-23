@@ -278,6 +278,30 @@ variable "llm_models" {
   default     = ""
 }
 
+variable "llm_monthly_spend_limit_usd" {
+  description = "Dollars of model calls per UTC month after which Sibyl refuses them, passed as SIBYL_MONTHLY_SPEND_LIMIT_USD. 0 means no limit"
+  type        = number
+  default     = 0
+}
+
+variable "llm_model_prices" {
+  description = "model=input/output in USD per million tokens, comma separated, passed to Sibyl as SIBYL_MODEL_PRICES. Every model in llm_models needs one when llm_monthly_spend_limit_usd is set"
+  type        = string
+  default     = ""
+}
+
+variable "monthly_spend_budget_usd" {
+  description = "AWS cost budget per month, credits excluded. At 100 percent it denies Bedrock to bedrock_api_key_user. 0 means no budget"
+  type        = number
+  default     = 0
+}
+
+variable "bedrock_api_key_user" {
+  description = "IAM user that holds Sibyl's Bedrock API key, the target of the budget's deny"
+  type        = string
+  default     = ""
+}
+
 variable "geolang_chat_runs_per_day" {
   description = "Chat runs per UTC day across all callers, passed to geolang-api as GEOLANG_CHAT_RUNS_PER_DAY. 0 means no limit"
   type        = number
