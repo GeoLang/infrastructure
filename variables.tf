@@ -146,6 +146,17 @@ variable "enable_cdn" {
   default     = true
 }
 
+variable "enable_demo_landing_page" {
+  description = "Serve the static demo landing page from S3 through CloudFront, with its wake and idle scale-down functions"
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_demo_landing_page || (var.enable_cdn && var.enable_geolang && var.nightly_scale_down != null)
+    error_message = "enable_demo_landing_page needs enable_cdn, enable_geolang, and nightly_scale_down."
+  }
+}
+
 variable "allow_cleartext_origin" {
   description = "Let CloudFront reach the load balancer over plain HTTP when no domain is configured"
   type        = bool

@@ -62,6 +62,9 @@ jobs:
       - name: Refresh database secrets
         run: python3 tests/test_refresh_database_secrets.py
 
+      - name: Demo scaling
+        run: python3 tests/test_demo_scaling.py
+
   plan:
     name: Plan
     runs-on: ubuntu-latest

@@ -35,6 +35,15 @@ variable "allow_cleartext_origin" {
   default     = false
 }
 
+variable "demo_page" {
+  description = "Private S3 bucket and path prefix for the static demo landing page, null for none"
+  type = object({
+    bucket_regional_domain_name = string
+    path                        = string
+  })
+  default = null
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
@@ -47,6 +56,30 @@ locals {
   # configured and origin.<domain> points at the ALB.
   origin_is_named = var.origin_domain_name != ""
   origin_host     = local.origin_is_named ? var.origin_domain_name : var.alb_dns_name
+
+  demo_page_origin_id     = "demo-page"
+  demo_page_cache_seconds = 300
+}
+
+resource "aws_cloudfront_origin_access_control" "demo_page" {
+  count = var.demo_page == null ? 0 : 1
+
+  name                              = "${var.name_prefix}-demo-page"
+  origin_access_control_origin_type = "s3"
+  signing_behavior                  = "always"
+  signing_protocol                  = "sigv4"
+}
+
+# S3 has no index documents over the REST endpoint CloudFront signs for
+resource "aws_cloudfront_function" "demo_page_index" {
+  count = var.demo_page == null ? 0 : 1
+
+  name    = "${var.name_prefix}-demo-page-index"
+  runtime = "cloudfront-js-2.0"
+  publish = true
+  code = templatefile("${path.module}/demo_page_index.js", {
+    demo_page_path = var.demo_page.path
+  })
 }
 
 # ─── CloudFront Distribution ─────────────────────────────────────────────────
@@ -69,6 +102,41 @@ resource "aws_cloudfront_distribution" "main" {
       # WARNING: http-only sends every Authorization header, JWT and session cookie to the ALB in cleartext
       origin_protocol_policy = local.origin_is_named ? "https-only" : "http-only"
       origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  dynamic "origin" {
+    for_each = var.demo_page == null ? [] : [var.demo_page]
+    content {
+      domain_name              = origin.value.bucket_regional_domain_name
+      origin_id                = local.demo_page_origin_id
+      origin_access_control_id = aws_cloudfront_origin_access_control.demo_page[0].id
+    }
+  }
+
+  dynamic "ordered_cache_behavior" {
+    for_each = var.demo_page == null ? [] : [var.demo_page.path, "${var.demo_page.path}/*"]
+    content {
+      path_pattern           = ordered_cache_behavior.value
+      allowed_methods        = ["GET", "HEAD"]
+      cached_methods         = ["GET", "HEAD"]
+      target_origin_id       = local.demo_page_origin_id
+      viewer_protocol_policy = "redirect-to-https"
+
+      forwarded_values {
+        query_string = false
+        cookies { forward = "none" }
+      }
+
+      min_ttl     = 0
+      default_ttl = local.demo_page_cache_seconds
+      max_ttl     = local.demo_page_cache_seconds
+      compress    = true
+
+      function_association {
+        event_type   = "viewer-request"
+        function_arn = aws_cloudfront_function.demo_page_index[0].arn
+      }
     }
   }
 
@@ -334,6 +402,11 @@ output "domain_name" {
 output "distribution_id" {
   description = "CloudFront distribution ID"
   value       = aws_cloudfront_distribution.main.id
+}
+
+output "distribution_arn" {
+  description = "CloudFront distribution ARN"
+  value       = aws_cloudfront_distribution.main.arn
 }
 
 output "hosted_zone_id" {

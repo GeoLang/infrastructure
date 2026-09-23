@@ -15,6 +15,11 @@ output "platform_url" {
   )
 }
 
+output "demo_landing_page_url" {
+  description = "Static demo landing page with the wake button"
+  value       = var.enable_demo_landing_page ? "${local.platform_origin}${local.demo_landing_page_path}/" : "Demo landing page disabled"
+}
+
 output "alb_dns_name" {
   description = "Application Load Balancer DNS name"
   value       = module.loadbalancer.alb_dns_name

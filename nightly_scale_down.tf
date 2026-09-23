@@ -6,7 +6,7 @@ locals {
     service_name => var.runtime_secrets_ready ? local.service_sizing[service].desired_count : 0
   }
 
-  nightly_scale_down_service_arns = [
+  ecs_service_arns = [
     for service_name in values(module.ecs.service_names) :
     "arn:${data.aws_partition.current.partition}:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:service/${module.ecs.cluster_name}/${service_name}"
   ]
@@ -48,7 +48,7 @@ resource "aws_iam_role_policy" "nightly_scale_down" {
     Statement = [{
       Effect   = "Allow"
       Action   = "ecs:UpdateService"
-      Resource = local.nightly_scale_down_service_arns
+      Resource = local.ecs_service_arns
     }]
   })
 }

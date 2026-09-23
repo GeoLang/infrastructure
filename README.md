@@ -265,6 +265,39 @@ It reads the cluster name from `terraform output -raw ecs_cluster`, lists the cl
 
 A second schedule per service does the up half at `morning_scale_up_hour` in the same timezone, 08:00 by default, so the preview runs from 08:00 to 23:00 Toronto time. It sets the desired count Terraform gives the service, which is 0 while `runtime_secrets_ready` is false. The morning schedule also undoes a manual scale-down, so before an absence set `nightly_scale_down = null` and apply to drop both schedules.
 
+## Demo landing page
+
+`enable_demo_landing_page` serves a static page at `/try/` on the CloudFront hostname, so it answers while every task is stopped. The preview turns it on, and `terraform output demo_landing_page_url` prints the address. The path is `/try` because viewtopia already serves files under `/demo`.
+
+The page is the three files in [demo-landing-page](demo-landing-page). Terraform uploads them to a private S3 bucket, `geolang-demo-landing-page-prod`, along with a generated `config.json` that holds the wake URL and the hours. CloudFront reads the bucket through an origin access control. A CloudFront Function redirects `/try` to `/try/` and serves `index.html` for `/try/`. CloudFront caches the page for five minutes, so an edit shows up within five minutes of the apply that uploads it.
+
+The flag needs `enable_cdn`, `enable_geolang`, and `nightly_scale_down`.
+
+### Waking the stack
+
+1. The start button copies the prompt to the clipboard and sends a POST to the `geolang-prod-demo-wake` function URL.
+2. The function adds one data point to the `DemoActivity` metric in the `GeoLang/geolang-prod` namespace, then sets every service to the desired count Terraform gives it. That is the same `ecs:UpdateService` call `platform-scale.sh up` makes.
+3. The page requests `/health`, `/agent/health`, and `/` every ten seconds. When all three answer 200 it opens the viewer. The start takes two to three minutes and the page gives up after ten.
+
+The function URL takes no authentication, so anyone who reads `config.json` can start the stack. Its CORS setting admits only the platform origin, which stops other sites calling it from a browser but not a script.
+
+### Idle scale-down
+
+A CloudWatch Logs metric filter on the geolang-api log group adds one to `DemoActivity` for each uvicorn access log line containing `POST /chat/agui`. geolang-api's log is the one place the stack already records chat runs. The Caddy proxy writes no access log, and the load balancer has access logs off and no per-path metric.
+
+Every five minutes outside the demo hours, an EventBridge schedule invokes `geolang-prod-demo-idle-scale-down`. When `DemoActivity` sums to zero over the last thirty minutes, the function sets every service to 0. The wake press counts as activity, so a stack that is still starting is not stopped. The schedule never runs between `morning_scale_up_hour` and `nightly_scale_down.hour`, 08:00 to 23:00 Toronto time on the preview, so it cannot undo the morning scale-up.
+
+To run the idle check by hand, which stops the stack if nothing has happened in the last thirty minutes:
+
+```bash
+aws lambda invoke --profile geolang \
+  --function-name geolang-prod-demo-idle-scale-down /dev/stdout
+```
+
+It prints the activity sum and whether it scaled down.
+
+A browser that has opened the viewer before gets the viewer instead of the landing page at `/try/`, because viewtopia's service worker answers every navigation outside the backend prefixes in its `navigateFallbackDenylist`.
+
 ## Routing
 
 The proxy preserves or strips paths according to the current platform compose contract:
@@ -336,20 +369,22 @@ terraform validate
 
 The GitHub workflow runs the same format and validation checks with Terraform 1.16.1, since `fmt` output tracks the toolchain version. `-backend=false` keeps that job away from the state bucket. Its manual plan job takes a profile, runs a real `terraform init`, and needs AWS credentials, both for the bucket and because `terraform plan` reads account and region data sources. It takes a long-lived access key pair from the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets, not an OIDC role that mints a short-lived one. No runtime application credential is passed to Terraform.
 
-The three shell commands and the refresh Lambda have their own tests, which stub the AWS CLI, Docker, and Terraform and so contact nothing:
+The three shell commands and the two Lambda sources have their own tests, which stub the AWS CLI, Docker, Terraform, and boto3 and so contact nothing:
 
 ```bash
 bash tests/test_publish_images.sh
 bash tests/test_put_runtime_secret.sh
 bash tests/test_platform_scale.sh
 python3 tests/test_refresh_database_secrets.py
+python3 tests/test_demo_scaling.py
 ```
 
-The workflow runs all four on every push to master and every pull request.
+The workflow runs all five on every push to master and every pull request.
 
 ## Important outputs
 
 - `platform_url`
+- `demo_landing_page_url`
 - `name_servers`, the hosted zone nameservers to set at the registrar between the first and second apply
 - `ecr_repositories`
 - `ecs_cluster`

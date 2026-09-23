@@ -756,7 +756,13 @@ module "cdn" {
 
   certificate_arn        = var.enable_dns && var.domain_name != "" ? module.dns[0].certificate_arn : ""
   allow_cleartext_origin = var.allow_cleartext_origin
-  tags                   = local.tags
+
+  demo_page = var.enable_demo_landing_page ? {
+    bucket_regional_domain_name = aws_s3_bucket.demo_landing_page[0].bucket_regional_domain_name
+    path                        = local.demo_landing_page_path
+  } : null
+
+  tags = local.tags
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

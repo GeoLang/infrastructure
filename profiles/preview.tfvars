@@ -64,6 +64,8 @@ nightly_scale_down = {
   hour     = 23
 }
 
+enable_demo_landing_page = true
+
 # Populate secrets and push the two ECR images before changing this to true.
 runtime_secrets_ready = true
 
