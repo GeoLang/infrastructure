@@ -51,7 +51,7 @@ used where a stack is already in memory.
 ## Time series
 
 ```
-terrano-core/src/timeseries.rs
+terrano/crates/terrano-core/src/timeseries.rs
 ```
 
 `RasterStack` holds the layers and their timestamps and computes composites
@@ -76,10 +76,12 @@ impl RasterStack {
 
 The served side is geoplumb: a STAC layer composites the items its search
 returns over the requested interval, `?t=<start>/<end>` on a tile request picks
-that interval, and `POST /zonal/{layer}/series` returns a zonal time series.
-Its composites add percentile and count. Mean, min, max, standard deviation and
-count fold item by item, so a pull holds one wave, while median and percentile
-hold a strip's whole stack under a memory budget.
+that interval. `POST /zonal/{layer}` returns zonal statistics for one interval
+and `POST /zonal/{layer}/series` returns a zonal time series.
+
+Its composites add latest, the default, plus percentile and count. Mean, min,
+max, standard deviation and count fold item by item, so a pull holds one wave,
+while median and percentile hold a strip's whole stack under a memory budget.
 
 ## External imagery
 
