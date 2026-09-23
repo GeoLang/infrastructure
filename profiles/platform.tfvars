@@ -70,9 +70,10 @@ service_overrides = {
     cpu    = 1024
     memory = 2048
   }
+  # two concurrent 3072 MiB tool runs plus the worker parent
   geolang-executor = {
     cpu    = 2048
-    memory = 4096
+    memory = 8192
   }
   geoplumb = {
     cpu    = 1024
