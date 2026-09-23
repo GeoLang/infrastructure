@@ -256,6 +256,28 @@ variable "llm_models" {
   default     = ""
 }
 
+variable "geolang_chat_runs_per_day" {
+  description = "Chat runs per UTC day across all callers, passed to geolang-api as GEOLANG_CHAT_RUNS_PER_DAY. 0 means no limit"
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.geolang_chat_runs_per_day >= 0 && floor(var.geolang_chat_runs_per_day) == var.geolang_chat_runs_per_day
+    error_message = "geolang_chat_runs_per_day must be a whole number, 0 or more."
+  }
+}
+
+variable "geolang_chat_runs_per_caller_per_day" {
+  description = "Chat runs per UTC day for one token subject, passed to geolang-api as GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY. 0 means no limit"
+  type        = number
+  default     = 0
+
+  validation {
+    condition     = var.geolang_chat_runs_per_caller_per_day >= 0 && floor(var.geolang_chat_runs_per_caller_per_day) == var.geolang_chat_runs_per_caller_per_day
+    error_message = "geolang_chat_runs_per_caller_per_day must be a whole number, 0 or more."
+  }
+}
+
 variable "jupyter_image" {
   description = "Pinned Jupyter Docker Stacks image"
   type        = string

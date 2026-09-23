@@ -146,6 +146,8 @@ Sibyl's model endpoint is two plain variables next to that key. `llm_api_base` b
 
 That key is a long-term Bedrock credential on the IAM user `geolang-sibyl-bedrock`, and it expires on 2027-09-19. Nothing rotates it. Create a replacement before that date, put it with `./scripts/put-runtime-secret.sh llm_api_key`, and force a new Sibyl deployment, since a task reads the secret only at start. `aws iam list-service-specific-credentials --user-name geolang-sibyl-bedrock --profile geolang` prints the expiry.
 
+`geolang_chat_runs_per_day` and `geolang_chat_runs_per_caller_per_day` become `GEOLANG_CHAT_RUNS_PER_DAY` and `GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY` on geolang-api, and each is left off the task when 0. The preview profile sets 300 and 40. geolang-api keeps the counts in memory, so they hold only while it runs as one task, and a new deployment resets them.
+
 ## Image build map
 
 Terraform creates ECR repositories but does not build or push images. Use the repository URLs from `terraform output -json ecr_repositories`.

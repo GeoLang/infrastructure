@@ -85,6 +85,11 @@ container_images = {
 llm_api_base = "https://bedrock-mantle.us-east-1.api.aws/v1"
 llm_models   = "openai.gpt-oss-120b,qwen.qwen3-235b-a22b-2507"
 
+# ── Chat spend caps ──────────────────────────────────────────────
+# signup is open, so the global cap is the real ceiling
+geolang_chat_runs_per_day            = 300
+geolang_chat_runs_per_caller_per_day = 40
+
 # ── Sizing ───────────────────────────────────────────────────────
 service_defaults = {
   cpu           = 256

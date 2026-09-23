@@ -597,6 +597,8 @@ module "ecs" {
           var.enable_itinera ? [{ name = "ITINERA_URL", value = "http://itinera.${local.sd_suffix}:3000" }] : [],
           var.enable_geodukt ? [{ name = "GEODUKT_URL", value = "http://geodukt.${local.sd_suffix}:8100" }] : [],
           var.enable_geolang_executor ? [{ name = "GEOLANG_EXECUTOR_URL", value = "http://geolang-executor.${local.sd_suffix}:8081" }] : [],
+          var.geolang_chat_runs_per_day > 0 ? [{ name = "GEOLANG_CHAT_RUNS_PER_DAY", value = tostring(var.geolang_chat_runs_per_day) }] : [],
+          var.geolang_chat_runs_per_caller_per_day > 0 ? [{ name = "GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY", value = tostring(var.geolang_chat_runs_per_caller_per_day) }] : [],
         )
         secrets = concat(
           contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
