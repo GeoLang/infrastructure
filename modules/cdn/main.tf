@@ -82,6 +82,25 @@ resource "aws_cloudfront_function" "demo_page_index" {
   })
 }
 
+# a forwarded Host makes S3 look up a bucket named after the CloudFront domain
+resource "aws_cloudfront_cache_policy" "demo_page" {
+  count = var.demo_page == null ? 0 : 1
+
+  name        = "${var.name_prefix}-demo-page"
+  min_ttl     = 0
+  default_ttl = local.demo_page_cache_seconds
+  max_ttl     = local.demo_page_cache_seconds
+
+  parameters_in_cache_key_and_forwarded_to_origin {
+    enable_accept_encoding_gzip   = true
+    enable_accept_encoding_brotli = true
+
+    cookies_config { cookie_behavior = "none" }
+    headers_config { header_behavior = "none" }
+    query_strings_config { query_string_behavior = "none" }
+  }
+}
+
 # ─── CloudFront Distribution ─────────────────────────────────────────────────
 
 resource "aws_cloudfront_distribution" "main" {
@@ -122,16 +141,8 @@ resource "aws_cloudfront_distribution" "main" {
       cached_methods         = ["GET", "HEAD"]
       target_origin_id       = local.demo_page_origin_id
       viewer_protocol_policy = "redirect-to-https"
-
-      forwarded_values {
-        query_string = false
-        cookies { forward = "none" }
-      }
-
-      min_ttl     = 0
-      default_ttl = local.demo_page_cache_seconds
-      max_ttl     = local.demo_page_cache_seconds
-      compress    = true
+      cache_policy_id        = aws_cloudfront_cache_policy.demo_page[0].id
+      compress               = true
 
       function_association {
         event_type   = "viewer-request"
