@@ -299,6 +299,12 @@ The flag needs `enable_cdn`, `enable_geolang`, and `nightly_scale_down`.
 
 The function URL takes no authentication, so anyone who reads `config.json` can start the stack. Its CORS setting admits only the platform origin, which stops other sites calling it from a browser but not a script.
 
+The function runs one call at a time (`reserved_concurrent_executions = 1`), so a script calling it in a loop cannot take the Lambda slots the idle scale-down and the secret refresh need. Lambda always leaves 100 units unreserved, and a new account's limit is 10, so the apply fails until the quota is raised:
+
+```bash
+aws service-quotas request-service-quota-increase --service-code lambda --quota-code L-B99A9384 --desired-value 1000 --region us-east-1 --profile geolang
+```
+
 ### Idle scale-down
 
 A CloudWatch Logs metric filter on the geolang-api log group adds one to `DemoActivity` for each uvicorn access log line containing `POST /chat/agui`. geolang-api's log is the one place the stack already records chat runs. The Caddy proxy writes no access log, and the load balancer has access logs off and no per-path metric.

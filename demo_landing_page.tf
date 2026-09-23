@@ -10,6 +10,7 @@ locals {
   demo_idle_minutes              = 30
   demo_idle_check_minutes        = 5
   demo_function_timeout_seconds  = 30
+  demo_wake_concurrency          = 1
   demo_activity_metric_namespace = "GeoLang/${local.name_prefix}"
   demo_activity_metric_name      = "DemoActivity"
 
@@ -199,6 +200,8 @@ resource "aws_lambda_function" "demo_wake" {
   handler       = "demo_scaling.wake_handler"
   runtime       = "python3.13"
   timeout       = local.demo_function_timeout_seconds
+  # the url is public, unbounded calls would take every lambda slot in the account
+  reserved_concurrent_executions = local.demo_wake_concurrency
 
   filename         = data.archive_file.demo_scaling[0].output_path
   source_code_hash = data.archive_file.demo_scaling[0].output_base64sha256
