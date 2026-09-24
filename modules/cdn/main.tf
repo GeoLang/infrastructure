@@ -41,6 +41,15 @@ variable "web_acl_arn" {
   default     = ""
 }
 
+variable "origin_verify_header" {
+  description = "Header CloudFront adds to every request to the ALB origin, null for none"
+  type = object({
+    name  = string
+    value = string
+  })
+  default = null
+}
+
 variable "demo_page" {
   description = "Private S3 bucket and path prefix for the static demo landing page, null for none"
   type = object({
@@ -122,6 +131,14 @@ resource "aws_cloudfront_distribution" "main" {
   origin {
     domain_name = local.origin_host
     origin_id   = "alb"
+
+    dynamic "custom_header" {
+      for_each = var.origin_verify_header == null ? [] : [var.origin_verify_header]
+      content {
+        name  = custom_header.value.name
+        value = custom_header.value.value
+      }
+    }
 
     custom_origin_config {
       http_port  = 80

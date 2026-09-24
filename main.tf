@@ -286,6 +286,7 @@ module "ecs" {
 
   alb_listener_arn       = module.loadbalancer.http_listener_arn
   alb_listener_https_arn = module.loadbalancer.https_listener_arn
+  origin_verify_header   = local.origin_verify_header
 
   tags = local.tags
 
@@ -761,6 +762,21 @@ resource "aws_s3_bucket_lifecycle_configuration" "tiles" {
 # CDN (CloudFront)
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# the alb security group admits every CloudFront distribution
+resource "random_password" "origin_verify" {
+  count = var.enable_cdn ? 1 : 0
+
+  length  = 48
+  special = false
+}
+
+locals {
+  origin_verify_header = var.enable_cdn ? {
+    name  = "X-Origin-Verify"
+    value = random_password.origin_verify[0].result
+  } : null
+}
+
 module "cdn" {
   source = "./modules/cdn"
   count  = var.enable_cdn ? 1 : 0
@@ -776,6 +792,7 @@ module "cdn" {
   certificate_arn        = var.enable_dns && var.domain_name != "" ? module.dns[0].certificate_arn : ""
   allow_cleartext_origin = var.allow_cleartext_origin
   web_acl_arn            = local.cloudfront_waf_enabled ? aws_wafv2_web_acl.cloudfront[0].arn : ""
+  origin_verify_header   = local.origin_verify_header
 
   demo_page = var.enable_demo_landing_page ? {
     bucket_regional_domain_name = aws_s3_bucket.demo_landing_page[0].bucket_regional_domain_name

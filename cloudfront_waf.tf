@@ -1,11 +1,13 @@
 locals {
-  cloudfront_waf_enabled             = var.enable_cdn && var.cloudfront_rate_limits != null
-  cloudfront_rate_window_seconds     = 300
-  cloudfront_auth_path_prefix        = "/api/v1/auth/"
+  cloudfront_waf_enabled         = var.enable_cdn && var.cloudfront_rate_limits != null
+  cloudfront_rate_window_seconds = 300
+  # the proxy also serves tiletopia's /api/v1/auth routes as /tiles/v1/auth
+  cloudfront_auth_path_segment       = "/v1/auth/"
   cloudfront_auth_rule_priority      = 1
   cloudfront_all_requests_priority   = 2
   cloudfront_path_decode_priority    = 0
-  cloudfront_path_lowercase_priority = 1
+  cloudfront_path_normalize_priority = 1
+  cloudfront_path_lowercase_priority = 2
 }
 
 # on the alb the client address comes from an X-Forwarded-For the client can forge
@@ -35,8 +37,8 @@ resource "aws_wafv2_web_acl" "cloudfront" {
 
         scope_down_statement {
           byte_match_statement {
-            positional_constraint = "STARTS_WITH"
-            search_string         = local.cloudfront_auth_path_prefix
+            positional_constraint = "CONTAINS"
+            search_string         = local.cloudfront_auth_path_segment
 
             field_to_match {
               uri_path {}
@@ -45,6 +47,11 @@ resource "aws_wafv2_web_acl" "cloudfront" {
             text_transformation {
               priority = local.cloudfront_path_decode_priority
               type     = "URL_DECODE"
+            }
+
+            text_transformation {
+              priority = local.cloudfront_path_normalize_priority
+              type     = "NORMALIZE_PATH"
             }
 
             text_transformation {

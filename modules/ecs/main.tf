@@ -100,6 +100,15 @@ variable "alb_listener_https_arn" {
   default     = ""
 }
 
+variable "origin_verify_header" {
+  description = "Header a request must carry for the listener rule to forward it, null to forward everything"
+  type = object({
+    name  = string
+    value = string
+  })
+  default = null
+}
+
 locals {
   public_services     = { for name, service in var.services : name => service if service.public }
   service_secret_arns = flatten([for service in values(var.services) : [for secret in service.secrets : secret.valueFrom]])
@@ -441,6 +450,16 @@ resource "aws_lb_listener_rule" "http" {
     }
   }
 
+  dynamic "condition" {
+    for_each = var.origin_verify_header == null ? [] : [var.origin_verify_header]
+    content {
+      http_header {
+        http_header_name = condition.value.name
+        values           = [condition.value.value]
+      }
+    }
+  }
+
   tags = var.tags
 }
 
@@ -458,6 +477,16 @@ resource "aws_lb_listener_rule" "https" {
   condition {
     path_pattern {
       values = ["/*"]
+    }
+  }
+
+  dynamic "condition" {
+    for_each = var.origin_verify_header == null ? [] : [var.origin_verify_header]
+    content {
+      http_header {
+        http_header_name = condition.value.name
+        values           = [condition.value.value]
+      }
     }
   }
 
