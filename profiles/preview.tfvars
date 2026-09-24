@@ -77,12 +77,12 @@ runtime_secrets_ready = true
 image_tag = "v0.1.7"
 
 container_images = {
-  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.3"
+  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.4"
   tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.2"
-  agora       = "ghcr.io/geolang/agora:v0.1.0"
+  agora       = "ghcr.io/geolang/agora:v0.1.1"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.3"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.9"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.10"
   geokode     = "ghcr.io/geolang/geokode:v0.4.0"
 }
 
@@ -148,10 +148,11 @@ ptolemy_limits = {
   PTOLEMY_MAX_STATE_KEYS_PER_PROJECT        = 20
 }
 tiletopia_limits = {
-  TILETOPIA_MAX_USERS              = 500
-  TILETOPIA_SIGNUPS_PER_HOUR       = 30
-  TILETOPIA_LOGIN_LOCKOUT_FAILURES = 5
-  TILETOPIA_LOGIN_LOCKOUT_MINUTES  = 15
+  TILETOPIA_MAX_USERS                    = 500
+  TILETOPIA_SIGNUPS_PER_HOUR             = 30
+  TILETOPIA_SIGNUPS_PER_ADDRESS_PER_HOUR = 3
+  TILETOPIA_LOGIN_LOCKOUT_FAILURES       = 5
+  TILETOPIA_LOGIN_LOCKOUT_MINUTES        = 15
   # CloudFront, the ALB and the platform proxy each append to X-Forwarded-For
   TILETOPIA_TRUSTED_PROXY_HOPS = 3
 }
