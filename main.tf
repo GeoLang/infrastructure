@@ -579,7 +579,7 @@ module "ecs" {
           [
             { name = "TOOL_EXEC_DIR", value = "/app/geolang" },
             { name = "GEOLANG_TOOL_MEMORY_LIMIT_MB", value = "3072" },
-            { name = "GEOLANG_TOOL_TIMEOUT_SECONDS", value = "840" },
+            { name = "GEOLANG_TOOL_TIMEOUT_SECONDS", value = "300" },
             { name = "GEOLANG_TOOL_MAX_CONCURRENT", value = "2" },
             { name = "PTOLEMY_URL", value = "http://ptolemy.${local.sd_suffix}:3000" },
             { name = "TILETOPIA_URL", value = "http://tiletopia.${local.sd_suffix}:3000" },
@@ -808,6 +808,8 @@ module "cdn" {
   allow_cleartext_origin = var.allow_cleartext_origin
   web_acl_arn            = local.cloudfront_waf_enabled ? aws_wafv2_web_acl.cloudfront[0].arn : ""
   origin_verify_header   = local.origin_verify_header
+
+  content_security_policy_enforced = var.content_security_policy_enforced
 
   demo_page = var.enable_demo_landing_page ? {
     bucket_regional_domain_name = aws_s3_bucket.demo_landing_page[0].bucket_regional_domain_name

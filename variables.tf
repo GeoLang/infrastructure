@@ -490,6 +490,12 @@ variable "cloudfront_rate_limits" {
   default = null
 }
 
+variable "content_security_policy_enforced" {
+  description = "Send the viewer's Content-Security-Policy as enforced. Off sends it as Content-Security-Policy-Report-Only, which only logs violations in the browser console"
+  type        = bool
+  default     = false
+}
+
 variable "waf_blocked_countries" {
   description = "ISO country codes to block at WAF (e.g., [\"CN\", \"RU\"])"
   type        = list(string)

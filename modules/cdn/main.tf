@@ -59,12 +59,35 @@ variable "demo_page" {
   default = null
 }
 
+variable "content_security_policy_enforced" {
+  description = "Send the viewer's Content-Security-Policy as enforced rather than report-only"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   type    = map(string)
   default = {}
 }
 
 locals {
+  # scripts only from the bundle or a blob url, data sources open because users add their own tile hosts
+  content_security_policy = join("; ", [
+    "default-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval' blob:",
+    "worker-src 'self' blob:",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src * data: blob:",
+    "connect-src * data: blob:",
+    "media-src * data: blob:",
+    "font-src 'self' data:",
+    "frame-src https:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ])
+
   # TLS to the origin needs a hostname we control. ACM will not issue for the
   # raw *.elb.amazonaws.com name and CloudFront checks the origin certificate
   # against the origin hostname, so https-only is only possible once a domain is
@@ -117,6 +140,38 @@ resource "aws_cloudfront_cache_policy" "demo_page" {
 }
 
 # ─── CloudFront Distribution ─────────────────────────────────────────────────
+
+resource "aws_cloudfront_response_headers_policy" "viewer" {
+  name = "${var.name_prefix}-viewer"
+
+  security_headers_config {
+    content_type_options {
+      override = true
+    }
+    referrer_policy {
+      referrer_policy = "strict-origin-when-cross-origin"
+      override        = true
+    }
+    dynamic "content_security_policy" {
+      for_each = var.content_security_policy_enforced ? [1] : []
+      content {
+        content_security_policy = local.content_security_policy
+        override                = true
+      }
+    }
+  }
+
+  dynamic "custom_headers_config" {
+    for_each = var.content_security_policy_enforced ? [] : [1]
+    content {
+      items {
+        header   = "Content-Security-Policy-Report-Only"
+        value    = local.content_security_policy
+        override = true
+      }
+    }
+  }
+}
 
 resource "aws_cloudfront_distribution" "main" {
   enabled         = true
@@ -178,10 +233,11 @@ resource "aws_cloudfront_distribution" "main" {
 
   # Default behavior, pass through to ALB (API, frontend)
   default_cache_behavior {
-    allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "alb"
-    viewer_protocol_policy = "redirect-to-https"
+    allowed_methods            = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
+    cached_methods             = ["GET", "HEAD"]
+    target_origin_id           = "alb"
+    viewer_protocol_policy     = "redirect-to-https"
+    response_headers_policy_id = aws_cloudfront_response_headers_policy.viewer.id
 
     forwarded_values {
       query_string = true

@@ -102,6 +102,8 @@ cloudfront_rate_limits = {
   requests_per_ip      = 3000
   auth_requests_per_ip = 20
 }
+# report-only until a headed browser run of the viewer shows no violations
+content_security_policy_enforced = false
 
 # ── Per-user limits ──────────────────────────────────────────────
 # signup is open and one person can hold several accounts, so the monthly spend cap is the real ceiling
