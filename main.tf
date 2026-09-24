@@ -294,10 +294,13 @@ module "ecs" {
         # readyz queries the database every 30 s and keeps the cluster from pausing
         health_path = "/api/v1/healthz"
         command     = ["serve", "--bind", "0.0.0.0:3000"]
-        environment = [
-          { name = "RUST_LOG", value = "info,ptolemy_api=debug" },
-          { name = "PTOLEMY_PORT", value = "3000" },
-        ]
+        environment = concat(
+          [
+            { name = "RUST_LOG", value = "info,ptolemy_api=debug" },
+            { name = "PTOLEMY_PORT", value = "3000" },
+          ],
+          [for name, value in var.ptolemy_limits : { name = name, value = tostring(value) } if value > 0],
+        )
         secrets = concat(
           contains(keys(local.runtime_secret_arns), "ptolemy_database_url") ? [{ name = "DATABASE_URL", valueFrom = local.runtime_secret_arns["ptolemy_database_url"] }] : [],
           contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
@@ -315,13 +318,16 @@ module "ecs" {
         container_port = 3000
         health_path    = "/api/v1/health"
         command        = []
-        environment = [
-          { name = "TILETOPIA_PORT", value = "3000" },
-          { name = "TILETOPIA_HOST", value = "0.0.0.0" },
-          { name = "TILETOPIA_DATA_DIR", value = "/data" },
-          { name = "RUST_LOG", value = "info,tiletopia=debug" },
-          { name = "AWS_REGION", value = var.aws_region },
-        ]
+        environment = concat(
+          [
+            { name = "TILETOPIA_PORT", value = "3000" },
+            { name = "TILETOPIA_HOST", value = "0.0.0.0" },
+            { name = "TILETOPIA_DATA_DIR", value = "/data" },
+            { name = "RUST_LOG", value = "info,tiletopia=debug" },
+            { name = "AWS_REGION", value = var.aws_region },
+          ],
+          [for name, value in var.tiletopia_limits : { name = name, value = tostring(value) } if value > 0],
+        )
         secrets = contains(keys(local.runtime_secret_arns), "platform_jwt") ? [
           { name = "TILETOPIA_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] },
         ] : []
@@ -491,6 +497,8 @@ module "ecs" {
             { name = "SIBYL_MONTHLY_SPEND_LIMIT_USD", value = tostring(var.llm_monthly_spend_limit_usd) },
             { name = "SIBYL_MODEL_PRICES", value = var.llm_model_prices },
           ] : [],
+          var.llm_locked_profile != "" ? [{ name = "SIBYL_LOCKED_PROFILE", value = var.llm_locked_profile }] : [],
+          [for name, value in var.sibyl_limits : { name = name, value = tostring(value) } if value > 0],
         )
         secrets = concat(
           contains(keys(local.runtime_secret_arns), "llm_api_key") ? [{ name = "SIBYL_CLOUD_API_KEY", valueFrom = local.runtime_secret_arns["llm_api_key"] }] : [],
@@ -601,9 +609,7 @@ module "ecs" {
           var.enable_itinera ? [{ name = "ITINERA_URL", value = "http://itinera.${local.sd_suffix}:3000" }] : [],
           var.enable_geodukt ? [{ name = "GEODUKT_URL", value = "http://geodukt.${local.sd_suffix}:8100" }] : [],
           var.enable_geolang_executor ? [{ name = "GEOLANG_EXECUTOR_URL", value = "http://geolang-executor.${local.sd_suffix}:8081" }] : [],
-          var.geolang_chat_runs_per_day > 0 ? [{ name = "GEOLANG_CHAT_RUNS_PER_DAY", value = tostring(var.geolang_chat_runs_per_day) }] : [],
-          var.geolang_chat_runs_per_caller_per_day > 0 ? [{ name = "GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY", value = tostring(var.geolang_chat_runs_per_caller_per_day) }] : [],
-          [for name, value in var.geolang_upload_limits : { name = name, value = tostring(value) } if value > 0],
+          [for name, value in var.geolang_limits : { name = name, value = tostring(value) } if value > 0],
         )
         secrets = concat(
           contains(keys(local.runtime_secret_arns), "platform_jwt") ? [{ name = "PLATFORM_JWT_SECRET", valueFrom = local.runtime_secret_arns["platform_jwt"] }] : [],
@@ -761,6 +767,7 @@ module "cdn" {
 
   certificate_arn        = var.enable_dns && var.domain_name != "" ? module.dns[0].certificate_arn : ""
   allow_cleartext_origin = var.allow_cleartext_origin
+  web_acl_arn            = local.cloudfront_waf_enabled ? aws_wafv2_web_acl.cloudfront[0].arn : ""
 
   demo_page = var.enable_demo_landing_page ? {
     bucket_regional_domain_name = aws_s3_bucket.demo_landing_page[0].bucket_regional_domain_name

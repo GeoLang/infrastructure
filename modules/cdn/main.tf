@@ -35,6 +35,12 @@ variable "allow_cleartext_origin" {
   default     = false
 }
 
+variable "web_acl_arn" {
+  description = "WAF web ACL attached to the distribution, empty for none"
+  type        = string
+  default     = ""
+}
+
 variable "demo_page" {
   description = "Private S3 bucket and path prefix for the static demo landing page, null for none"
   type = object({
@@ -110,6 +116,8 @@ resource "aws_cloudfront_distribution" "main" {
   price_class     = "PriceClass_100" # US, Canada, Europe
 
   aliases = var.domain_name != "" && var.certificate_arn != "" ? [var.domain_name] : []
+
+  web_acl_id = var.web_acl_arn != "" ? var.web_acl_arn : null
 
   origin {
     domain_name = local.origin_host

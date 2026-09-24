@@ -302,37 +302,54 @@ variable "bedrock_api_key_user" {
   default     = ""
 }
 
-variable "geolang_chat_runs_per_day" {
-  description = "Chat runs per UTC day across all callers, passed to geolang-api as GEOLANG_CHAT_RUNS_PER_DAY. 0 means no limit"
-  type        = number
-  default     = 0
-
-  validation {
-    condition     = var.geolang_chat_runs_per_day >= 0 && floor(var.geolang_chat_runs_per_day) == var.geolang_chat_runs_per_day
-    error_message = "geolang_chat_runs_per_day must be a whole number, 0 or more."
-  }
-}
-
-variable "geolang_chat_runs_per_caller_per_day" {
-  description = "Chat runs per UTC day for one token subject, passed to geolang-api as GEOLANG_CHAT_RUNS_PER_CALLER_PER_DAY. 0 means no limit"
-  type        = number
-  default     = 0
-
-  validation {
-    condition     = var.geolang_chat_runs_per_caller_per_day >= 0 && floor(var.geolang_chat_runs_per_caller_per_day) == var.geolang_chat_runs_per_caller_per_day
-    error_message = "geolang_chat_runs_per_caller_per_day must be a whole number, 0 or more."
-  }
-}
-
-variable "geolang_upload_limits" {
-  description = "GEOLANG_UPLOAD_* caps passed to geolang-api by name, whole numbers, 0 or a missing key means no limit"
+variable "geolang_limits" {
+  description = "Numeric GEOLANG_* limits passed to geolang-api by name (upload, tool run, output and retention caps), whole numbers, 0 or a missing key means no limit"
   type        = map(number)
   default     = {}
 
   validation {
-    condition     = alltrue([for name, value in var.geolang_upload_limits : startswith(name, "GEOLANG_UPLOAD_") && value >= 0 && floor(value) == value])
-    error_message = "geolang_upload_limits keys must start with GEOLANG_UPLOAD_ and values must be whole numbers, 0 or more."
+    condition     = alltrue([for name, value in var.geolang_limits : startswith(name, "GEOLANG_") && value >= 0 && floor(value) == value])
+    error_message = "geolang_limits keys must start with GEOLANG_ and values must be whole numbers, 0 or more."
   }
+}
+
+variable "sibyl_limits" {
+  description = "Numeric SIBYL_* per-user daily limits passed to Sibyl by name, whole numbers, 0 or a missing key means no limit"
+  type        = map(number)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for name, value in var.sibyl_limits : startswith(name, "SIBYL_") && value >= 0 && floor(value) == value])
+    error_message = "sibyl_limits keys must start with SIBYL_ and values must be whole numbers, 0 or more."
+  }
+}
+
+variable "ptolemy_limits" {
+  description = "Numeric PTOLEMY_MAX_* per-user quotas passed to ptolemy by name, whole numbers, 0 or a missing key means no limit"
+  type        = map(number)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for name, value in var.ptolemy_limits : startswith(name, "PTOLEMY_MAX_") && value >= 0 && floor(value) == value])
+    error_message = "ptolemy_limits keys must start with PTOLEMY_MAX_ and values must be whole numbers, 0 or more."
+  }
+}
+
+variable "tiletopia_limits" {
+  description = "Numeric TILETOPIA_* signup and login limits passed to tiletopia by name, whole numbers, a missing key keeps tiletopia's default"
+  type        = map(number)
+  default     = {}
+
+  validation {
+    condition     = alltrue([for name, value in var.tiletopia_limits : startswith(name, "TILETOPIA_") && value >= 0 && floor(value) == value])
+    error_message = "tiletopia_limits keys must start with TILETOPIA_ and values must be whole numbers, 0 or more."
+  }
+}
+
+variable "llm_locked_profile" {
+  description = "Sibyl profile id every run uses, passed as SIBYL_LOCKED_PROFILE. Empty lets each user pick"
+  type        = string
+  default     = ""
 }
 
 variable "jupyter_image" {
@@ -446,6 +463,15 @@ variable "waf_rate_limit" {
   description = "WAF rate limit, max requests per 5-minute window per client address"
   type        = number
   default     = 2000
+}
+
+variable "cloudfront_rate_limits" {
+  description = "Requests per client address per 5 minutes that a WAF on CloudFront allows, overall and to /api/v1/auth/. Null means no WAF on CloudFront"
+  type = object({
+    requests_per_ip      = number
+    auth_requests_per_ip = number
+  })
+  default = null
 }
 
 variable "waf_blocked_countries" {

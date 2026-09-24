@@ -1,5 +1,7 @@
 # Changelog
 
+- 2026-09-23: `cloudfront_rate_limits` attaches a WAF to CloudFront that blocks an address past 3000 requests, or 20 under `/api/v1/auth/`, in five minutes. The preview turns it on.
+- 2026-09-23: `geolang_limits`, `sibyl_limits`, `ptolemy_limits` and `tiletopia_limits` pass each service's numeric limits by name, and `llm_locked_profile` locks the model. `geolang_limits` replaces `geolang_upload_limits`, `geolang_chat_runs_per_day` and `geolang_chat_runs_per_caller_per_day`. The preview pins geolang v0.1.8, sibyl v0.1.2, ptolemy v0.2.2, tiletopia v0.4.1 and viewtopia v0.1.6.
 - 2026-09-23: the preview pins geolang v0.1.7, which carries the chat spend caps, the `/upload` caps and the viewer eval fixes, and `geolang_upload_limits` passes the `GEOLANG_UPLOAD_*` caps to geolang-api.
 - 2026-09-23: the platform profile gives the GeoLang executor 8192 MiB, enough for its two concurrent 3072 MiB tool runs.
 - 2026-09-23: every service gets a morning scale-up schedule at `morning_scale_up_hour`, 08:00 by default in the `nightly_scale_down` timezone.

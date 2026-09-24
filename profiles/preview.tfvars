@@ -72,15 +72,15 @@ runtime_secrets_ready = true
 # ── Images ───────────────────────────────────────────────────────
 # Everything already published to ghcr comes from there. Only viewtopia and the
 # platform proxy are built into ECR, so only those two get a repository.
-image_tag = "v0.1.5"
+image_tag = "v0.1.6"
 
 container_images = {
-  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.1"
-  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.0"
+  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.2"
+  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.1"
   agora       = "ghcr.io/geolang/agora:v0.1.0"
-  sibyl       = "ghcr.io/geolang/sibyl:v0.1.1"
+  sibyl       = "ghcr.io/geolang/sibyl:v0.1.2"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.7"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.8"
 }
 
 # ── Sibyl model access ───────────────────────────────────────────
@@ -94,13 +94,25 @@ llm_model_prices            = "openai.gpt-oss-120b=0.15/0.60,qwen.qwen3-235b-a22
 monthly_spend_budget_usd    = 100
 bedrock_api_key_user        = "geolang-sibyl-bedrock"
 
-# ── Chat spend caps ──────────────────────────────────────────────
-# signup is open, so the global cap is the real ceiling
-geolang_chat_runs_per_day            = 300
-geolang_chat_runs_per_caller_per_day = 40
+# ── Rate limits at CloudFront ────────────────────────────────────
+cloudfront_rate_limits = {
+  requests_per_ip      = 3000
+  auth_requests_per_ip = 20
+}
 
-# ── Upload caps ──────────────────────────────────────────────────
-geolang_upload_limits = {
+# ── Per-user limits ──────────────────────────────────────────────
+# signup is open and one person can hold several accounts, so the monthly spend cap is the real ceiling
+llm_locked_profile = "cloud:openai.gpt-oss-120b"
+sibyl_limits = {
+  SIBYL_RUNS_PER_USER_PER_DAY    = 40
+  SIBYL_TOKENS_PER_USER_PER_DAY  = 2000000
+  SIBYL_RUNS_PER_ADMIN_PER_DAY   = 500
+  SIBYL_TOKENS_PER_ADMIN_PER_DAY = 50000000
+}
+
+# ── geolang-api caps ─────────────────────────────────────────────
+# a chat user inside sibyl's limits makes at most 40 runs of 30 tool calls
+geolang_limits = {
   GEOLANG_UPLOAD_MAX_REQUEST_MEGABYTES        = 51
   GEOLANG_UPLOAD_MAX_FILE_MEGABYTES           = 50
   GEOLANG_UPLOAD_MAX_ZIP_ENTRIES              = 100
@@ -109,6 +121,29 @@ geolang_upload_limits = {
   GEOLANG_UPLOAD_FILES_PER_CALLER_PER_DAY     = 20
   GEOLANG_UPLOAD_MEGABYTES_PER_DAY            = 2048
   GEOLANG_UPLOAD_MEGABYTES_PER_CALLER_PER_DAY = 200
+  GEOLANG_TOOL_RUNS_PER_CALLER_PER_DAY        = 1200
+  GEOLANG_TOOL_RUNS_PER_DAY                   = 10000
+  GEOLANG_TOOL_RUNS_AT_ONCE_PER_CALLER        = 1
+  GEOLANG_OUTPUT_MEGABYTES_PER_CALLER_PER_DAY = 500
+  GEOLANG_USER_DATA_RETENTION_DAYS            = 30
+}
+
+# ── ptolemy quotas and tiletopia signup limits ──────────────────
+ptolemy_limits = {
+  PTOLEMY_MAX_ATTACHMENT_MEGABYTES_PER_USER = 200
+  PTOLEMY_MAX_ATTACHMENTS_PER_USER          = 200
+  PTOLEMY_MAX_WORKSPACES_PER_USER           = 5
+  PTOLEMY_MAX_PROJECTS_PER_USER             = 20
+  PTOLEMY_MAX_INVITATIONS_PER_USER          = 100
+  PTOLEMY_MAX_MEMBERS_PER_WORKSPACE         = 50
+  PTOLEMY_MAX_MEMBERS_PER_PROJECT           = 50
+  PTOLEMY_MAX_STATE_KEYS_PER_PROJECT        = 20
+}
+tiletopia_limits = {
+  TILETOPIA_MAX_USERS              = 500
+  TILETOPIA_SIGNUPS_PER_HOUR       = 30
+  TILETOPIA_LOGIN_LOCKOUT_FAILURES = 5
+  TILETOPIA_LOGIN_LOCKOUT_MINUTES  = 15
 }
 
 # ── Sizing ───────────────────────────────────────────────────────
