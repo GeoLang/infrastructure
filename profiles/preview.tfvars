@@ -78,7 +78,7 @@ image_tag = "v0.1.7"
 
 container_images = {
   ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.4"
-  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.2"
+  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.3"
   agora       = "ghcr.io/geolang/agora:v0.1.1"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.3"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
