@@ -376,9 +376,9 @@ resource "aws_lb_listener" "http" {
     dynamic "fixed_response" {
       for_each = var.certificate_arn == "" ? [1] : []
       content {
-        content_type = "application/json"
-        message_body = "{\"service\":\"geolang\",\"status\":\"healthy\"}"
-        status_code  = "200"
+        content_type = "text/plain"
+        message_body = "forbidden"
+        status_code  = "403"
       }
     }
   }
@@ -398,9 +398,9 @@ resource "aws_lb_listener" "https" {
   default_action {
     type = "fixed-response"
     fixed_response {
-      content_type = "application/json"
-      message_body = "{\"service\":\"geolang\",\"status\":\"healthy\"}"
-      status_code  = "200"
+      content_type = "text/plain"
+      message_body = "forbidden"
+      status_code  = "403"
     }
   }
 }

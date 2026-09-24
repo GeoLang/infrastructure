@@ -114,18 +114,19 @@ sibyl_limits = {
 }
 
 # ── geolang-api caps ─────────────────────────────────────────────
-# a chat user inside sibyl's limits makes at most 40 runs of 30 tool calls
+# a chat user inside sibyl's limits makes at most 40 runs of 30 tool calls,
+# the global PER_DAY caps sit at per-caller times TILETOPIA_MAX_USERS
 geolang_limits = {
   GEOLANG_UPLOAD_MAX_REQUEST_MEGABYTES        = 51
   GEOLANG_UPLOAD_MAX_FILE_MEGABYTES           = 50
   GEOLANG_UPLOAD_MAX_ZIP_ENTRIES              = 100
   GEOLANG_UPLOAD_MAX_UNZIPPED_MEGABYTES       = 200
-  GEOLANG_UPLOAD_FILES_PER_DAY                = 300
+  GEOLANG_UPLOAD_FILES_PER_DAY                = 10000
   GEOLANG_UPLOAD_FILES_PER_CALLER_PER_DAY     = 20
-  GEOLANG_UPLOAD_MEGABYTES_PER_DAY            = 2048
+  GEOLANG_UPLOAD_MEGABYTES_PER_DAY            = 100000
   GEOLANG_UPLOAD_MEGABYTES_PER_CALLER_PER_DAY = 200
   GEOLANG_TOOL_RUNS_PER_CALLER_PER_DAY        = 1200
-  GEOLANG_TOOL_RUNS_PER_DAY                   = 10000
+  GEOLANG_TOOL_RUNS_PER_DAY                   = 600000
   GEOLANG_TOOL_RUNS_AT_ONCE_PER_CALLER        = 1
   GEOLANG_OUTPUT_MEGABYTES_PER_CALLER_PER_DAY = 500
   GEOLANG_USER_DATA_RETENTION_DAYS            = 30
