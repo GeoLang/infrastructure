@@ -75,8 +75,10 @@ variable "services" {
       read_only      = optional(bool, false)
     })), [])
     efs_volumes = optional(map(object({
-      file_system_id  = string
-      access_point_id = string
+      file_system_id   = string
+      file_system_arn  = string
+      access_point_id  = string
+      access_point_arn = string
     })), {})
   }))
 }
@@ -108,6 +110,22 @@ locals {
       service.security_group_id,
       service.runs_untrusted_code ? var.untrusted_code_security_group_id : var.ecs_security_group_id,
     )
+  }
+
+  untrusted_code_services = { for name, service in var.services : name => service if service.runs_untrusted_code }
+
+  efs_client_grants = {
+    for name, service in var.services : name => {
+      runs_untrusted_code = service.runs_untrusted_code
+      file_system_arns    = distinct([for volume in values(service.efs_volumes) : volume.file_system_arn])
+      access_point_arns_by_action = {
+        "elasticfilesystem:ClientMount" = [for volume in values(service.efs_volumes) : volume.access_point_arn]
+        "elasticfilesystem:ClientWrite" = [
+          for volume_name, volume in service.efs_volumes : volume.access_point_arn
+          if anytrue([for mount in service.mount_points : mount.source_volume == volume_name && !mount.read_only])
+        ]
+      }
+    } if length(service.efs_volumes) > 0
   }
 }
 
@@ -221,11 +239,11 @@ resource "aws_iam_role" "ecs_task" {
   tags = var.tags
 }
 
-# Services running user-supplied code get their own role: any code they run can
-# read the role's credentials from the task metadata endpoint, so it holds no
-# policies at all.
+# user code can read these credentials, so each role holds only EFS client grants for its own service's access points
 resource "aws_iam_role" "ecs_task_untrusted_code" {
-  name = "${var.name_prefix}-ecs-task-untrusted-code"
+  for_each = local.untrusted_code_services
+
+  name = "${var.name_prefix}-${each.key}-untrusted-code"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -259,6 +277,25 @@ resource "aws_iam_role_policy" "ecs_s3" {
   })
 }
 
+resource "aws_iam_role_policy" "efs_client" {
+  for_each = local.efs_client_grants
+
+  name = "${var.name_prefix}-${each.key}-efs-client"
+  role = each.value.runs_untrusted_code ? aws_iam_role.ecs_task_untrusted_code[each.key].id : aws_iam_role.ecs_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      for action, access_point_arns in each.value.access_point_arns_by_action : {
+        Effect    = "Allow"
+        Action    = action
+        Resource  = each.value.file_system_arns
+        Condition = { StringEquals = { "elasticfilesystem:AccessPointArn" = access_point_arns } }
+      } if length(access_point_arns) > 0
+    ]
+  })
+}
+
 # ─── CloudWatch Log Groups ───────────────────────────────────────────────────
 
 resource "aws_cloudwatch_log_group" "services" {
@@ -281,7 +318,7 @@ resource "aws_ecs_task_definition" "services" {
   cpu                      = each.value.cpu
   memory                   = each.value.memory
   execution_role_arn       = aws_iam_role.ecs_execution.arn
-  task_role_arn            = each.value.runs_untrusted_code ? aws_iam_role.ecs_task_untrusted_code.arn : aws_iam_role.ecs_task.arn
+  task_role_arn            = each.value.runs_untrusted_code ? aws_iam_role.ecs_task_untrusted_code[each.key].arn : aws_iam_role.ecs_task.arn
 
   runtime_platform {
     operating_system_family = "LINUX"
@@ -299,7 +336,7 @@ resource "aws_ecs_task_definition" "services" {
 
         authorization_config {
           access_point_id = volume.value.access_point_id
-          iam             = "DISABLED"
+          iam             = "ENABLED"
         }
       }
     }

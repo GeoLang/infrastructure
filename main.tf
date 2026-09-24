@@ -171,10 +171,18 @@ locals {
 
   efs_volumes = var.enable_efs ? {
     for name, access_point_id in module.storage[0].access_points : name => {
-      file_system_id  = module.storage[0].file_system_id
-      access_point_id = access_point_id
+      file_system_id   = module.storage[0].file_system_id
+      file_system_arn  = module.storage[0].file_system_arn
+      access_point_id  = access_point_id
+      access_point_arn = module.storage[0].access_point_arns[name]
     }
   } : {}
+
+  efs_client_actions = [
+    "elasticfilesystem:ClientMount",
+    "elasticfilesystem:ClientWrite",
+    "elasticfilesystem:ClientRootAccess",
+  ]
 }
 
 # services start with desired_count > 0 as soon as runtime_secrets_ready flips, so a
@@ -580,7 +588,7 @@ module "ecs" {
           { source_volume = "geolang-outputs", container_path = "/app/geolang/outputs" },
           { source_volume = "geolang-user-data", container_path = "/app/geolang/user_data" },
           { source_volume = "geolang-live-data", container_path = "/app/geolang/live_data" },
-          { source_volume = "geolang-natural-earth", container_path = "/app/geolang/natural_earth" },
+          { source_volume = "geolang-natural-earth", container_path = "/app/geolang/natural_earth", read_only = true },
         ] : []
       }
     } : {},
@@ -900,6 +908,37 @@ module "storage" {
   access_points = local.persistent_access_points
 
   tags = local.tags
+}
+
+resource "aws_efs_file_system_policy" "main" {
+  count = var.enable_efs ? 1 : 0
+
+  file_system_id = module.storage[0].file_system_id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "DenyWithoutAccessPoint"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = local.efs_client_actions
+        Resource  = module.storage[0].file_system_arn
+        Condition = { Null = { "elasticfilesystem:AccessPointArn" = "true" } }
+      },
+      {
+        Sid       = "DenyWithoutTls"
+        Effect    = "Deny"
+        Principal = { AWS = "*" }
+        Action    = local.efs_client_actions
+        Resource  = module.storage[0].file_system_arn
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
+      },
+    ]
+  })
+
+  # running tasks mount without IAM until their services roll to the new task definitions
+  depends_on = [module.ecs]
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -156,6 +156,11 @@ output "access_points" {
   value       = { for name, access_point in aws_efs_access_point.services : name => access_point.id }
 }
 
+output "access_point_arns" {
+  description = "EFS access point ARNs per service"
+  value       = { for name, access_point in aws_efs_access_point.services : name => access_point.arn }
+}
+
 output "security_group_id" {
   description = "EFS security group ID"
   value       = aws_security_group.efs.id

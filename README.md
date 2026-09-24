@@ -100,11 +100,21 @@ EFS access points provide persistent storage for:
 - Fenestra coverages
 - Sibyl's SQLite database
 - GeoLang's cache
-- GeoLang Natural Earth reference data shared by the API and executor at `/app/geolang/natural_earth`
+- GeoLang Natural Earth reference data at `/app/geolang/natural_earth`, read-write in the API and read-only in the executor
 - GeoLang outputs, user data, and live data shared with geodukt and the executor
 - Jupyter notebooks under `/home/jovyan/work`
 
-Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point. GeoLang downloads Natural Earth data on demand into its own directory, so its access point needs nothing staged.
+Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point. GeoLang downloads Natural Earth data on demand into its own directory, so its access point needs nothing staged. The executor's read-only mount needs a geolang image whose Natural Earth download falls back to the caller's own directory when the shared one is read-only.
+
+The file system policy denies every client that connects without an access point or without TLS. It allows nothing itself, so a client without IAM credentials is refused. Every task mounts with its task role, and each role holds `ClientMount` on the access points its services mount and `ClientWrite` on the ones they mount read-write, never `ClientRootAccess`. The executor and Jupyter each have their own role, so code that escapes either sandbox can reach only that service's access points. The other services share one role. Geokode mounts spatial data read-only, but Itinera writes it through the same role, so that role holds write on it. To stage files, mount one access point with `mount -t efs -o tls,iam,accesspoint=<access point id> <file system id> /mnt`, using credentials that hold `ClientWrite` on it. A plain NFS mount of the file system root is refused.
+
+A stack that already runs EFS-backed tasks without IAM mounts has to roll them before the policy lands, or their mounts are refused. The policy depends on the ECS module, but `aws_ecs_service` returns before its deployment finishes, so apply in two steps. The waiter takes at most ten services per call.
+
+```bash
+terraform apply -var-file=profiles/preview.tfvars -target=module.ecs
+aws ecs wait services-stable --cluster "$(terraform output -raw ecs_cluster)" --services <EFS-backed service names> --profile geolang
+terraform apply -var-file=profiles/preview.tfvars
+```
 
 geoplumb serves the public STAC layers in [containers/geoplumb/layers.toml](containers/geoplumb/layers.toml), a Copernicus DEM hillshade and a Sentinel-2 NDVI, copied into its wrapper image. The configuration has no credentials. The image is built in two steps so the configuration is part of an immutable image.
 
@@ -233,7 +243,7 @@ Without it, the apply creates the zone that publishes those nameservers, so dele
 After the apply that creates the load balancer:
 
 1. Run `./scripts/publish-images.sh <image_tag>` to build and push every enabled ECR image.
-2. Stage the required files in EFS.
+2. Stage the required files in EFS through their access points.
 3. Populate the operator-managed runtime secrets and wait for the database refresh job to create the `agora` role and database and both URL secret versions.
 4. On a profile that runs Jupyter, give the Jupyter token to the people who need notebooks. Each user pastes it into ViewTopia's notebook settings in their own browser.
 5. Set `runtime_secrets_ready = true`.
@@ -371,7 +381,7 @@ Agora has its own group because it listens on the same port the executor's tool 
 
 Agora also authenticates its own requests. Every route needs a token except `/health`, share-link resolution, and attachment reads, and those last two carry per-document capability tokens.
 
-The GeoLang executor has a group whose egress is limited to its tool call targets, DNS, EFS, and outbound HTTPS. Jupyter has a fourth group with no tool call egress at all, since notebooks call no platform service. Both of those run user-supplied code and use a task role that holds no policies.
+The GeoLang executor has a group whose egress is limited to its tool call targets, DNS, EFS, and outbound HTTPS. Jupyter has a fourth group with no tool call egress at all, since notebooks call no platform service. Both of those run user-supplied code, and each has its own task role that holds only EFS client grants for that service's access points.
 
 ## Bastion, firewall, and backups
 
