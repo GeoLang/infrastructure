@@ -3,6 +3,13 @@
 # the @undeployed block and answers 501 instead of proxying to a name that does
 # not resolve. the gates default to false, so a service is reachable only when
 # the deployment names it.
+{
+	servers {
+		# the ALB, so X-Forwarded-For keeps the viewer address CloudFront appended
+		trusted_proxies static private_ranges
+	}
+}
+
 :8080 {
 	route {
 		handle /health {

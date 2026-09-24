@@ -144,6 +144,8 @@ tiletopia_limits = {
   TILETOPIA_SIGNUPS_PER_HOUR       = 30
   TILETOPIA_LOGIN_LOCKOUT_FAILURES = 5
   TILETOPIA_LOGIN_LOCKOUT_MINUTES  = 15
+  # CloudFront, the ALB and the platform proxy each append to X-Forwarded-For
+  TILETOPIA_TRUSTED_PROXY_HOPS = 3
 }
 
 # ── Sizing ───────────────────────────────────────────────────────
