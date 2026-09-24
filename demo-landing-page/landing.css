@@ -35,15 +35,3 @@ button {
 button:disabled {
   cursor: wait;
 }
-
-.sample-report {
-  margin: 2rem 0 0;
-}
-
-.sample-report-placeholder {
-  display: grid;
-  place-items: center;
-  aspect-ratio: 4 / 3;
-  border: 1px dashed currentColor;
-  opacity: 0.6;
-}
