@@ -21,14 +21,14 @@ enable_geolang          = true
 enable_viewtopia        = true
 enable_platform_proxy   = true
 
-enable_geokode   = false
+enable_geokode   = true
 enable_itinera   = false
 enable_interiora = false
 enable_geoplumb  = false
 enable_fenestra  = false
 enable_jupyter   = false
 
-geokode_index_version = ""
+geokode_index_version = "planet-260914-v2"
 
 # ── Database ─────────────────────────────────────────────────────
 enable_database = true
@@ -74,15 +74,16 @@ runtime_secrets_ready = true
 # ── Images ───────────────────────────────────────────────────────
 # Everything already published to ghcr comes from there. Only viewtopia and the
 # platform proxy are built into ECR, so only those two get a repository.
-image_tag = "v0.1.6"
+image_tag = "v0.1.7"
 
 container_images = {
-  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.2"
-  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.1"
+  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.3"
+  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.2"
   agora       = "ghcr.io/geolang/agora:v0.1.0"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.2"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.8"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.9"
+  geokode     = "ghcr.io/geolang/geokode:v0.4.0"
 }
 
 # ── Sibyl model access ───────────────────────────────────────────
