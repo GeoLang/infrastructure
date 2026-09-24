@@ -154,7 +154,7 @@ locals {
 
   persistent_access_points = merge(
     var.enable_tiletopia ? { tiletopia = { path = "/tiletopia", uid = 1000, gid = 1000 } } : {},
-    var.enable_geokode || var.enable_itinera ? { spatial-data = { path = "/spatial-data", uid = 1000, gid = 1000 } } : {},
+    var.enable_itinera ? { spatial-data = { path = "/spatial-data", uid = 1000, gid = 1000 } } : {},
     var.enable_interiora ? { interiora = { path = "/interiora", uid = 1000, gid = 1000 } } : {},
     var.enable_geoplumb ? { geoplumb-cache = { path = "/geoplumb-cache", uid = 1000, gid = 1000 } } : {},
     var.enable_sibyl ? { sibyl = { path = "/sibyl", uid = 1000, gid = 1000 } } : {},
@@ -183,6 +183,13 @@ locals {
     "elasticfilesystem:ClientWrite",
     "elasticfilesystem:ClientRootAccess",
   ]
+
+  geokode_index_url         = var.enable_s3_tiles ? "s3://${aws_s3_bucket.tiles[0].id}/geokode-index" : null
+  geokode_index_copy_image  = "public.ecr.aws/aws-cli/aws-cli:2.37.1"
+  geokode_index_directory   = "/index"
+  geokode_index_volume_name = "geokode-index"
+  # the planet index is about 6.5 GB
+  geokode_ephemeral_storage_gib = 30
 }
 
 # services start with desired_count > 0 as soon as runtime_secrets_ready flips, so a
@@ -355,15 +362,21 @@ module "ecs" {
         memory         = local.service_sizing["geokode"].memory
         desired_count  = var.runtime_secrets_ready ? local.service_sizing["geokode"].desired_count : 0
         container_port = 3000
-        health_path    = "/health"
-        command        = ["serve", "--data", "/data/region.osm.pbf", "--bind", "0.0.0.0:3000"]
+        health_path    = "/readyz"
+        command        = ["serve", "--index", local.geokode_index_directory, "--bind", "0.0.0.0:3000"]
         environment = [
           { name = "RUST_LOG", value = "info,geokode=debug" },
         ]
-        efs_volumes = var.enable_efs ? { spatial-data = local.efs_volumes["spatial-data"] } : {}
-        mount_points = var.enable_efs ? [
-          { source_volume = "spatial-data", container_path = "/data", read_only = true },
-        ] : []
+        ephemeral_storage_gib = local.geokode_ephemeral_storage_gib
+        init_container = {
+          image          = local.geokode_index_copy_image
+          command        = ["s3", "sync", "${local.geokode_index_url}/${var.geokode_index_version}/", "${local.geokode_index_directory}/", "--region", var.aws_region, "--only-show-errors"]
+          volume         = local.geokode_index_volume_name
+          container_path = local.geokode_index_directory
+        }
+        mount_points = [
+          { source_volume = local.geokode_index_volume_name, container_path = local.geokode_index_directory, read_only = true },
+        ]
       }
     } : {},
 
@@ -562,20 +575,22 @@ module "ecs" {
         user                 = "1000:1000"
         dropped_capabilities = ["ALL"]
         runs_untrusted_code  = true
-        environment = [
-          { name = "TOOL_EXEC_DIR", value = "/app/geolang" },
-          { name = "GEOLANG_TOOL_MEMORY_LIMIT_MB", value = "3072" },
-          { name = "GEOLANG_TOOL_TIMEOUT_SECONDS", value = "840" },
-          { name = "GEOLANG_TOOL_MAX_CONCURRENT", value = "2" },
-          { name = "PTOLEMY_URL", value = "http://ptolemy.${local.sd_suffix}:3000" },
-          { name = "TILETOPIA_URL", value = "http://tiletopia.${local.sd_suffix}:3000" },
-          { name = "GEOKODE_URL", value = "http://geokode.${local.sd_suffix}:3000" },
-          { name = "ITINERA_URL", value = "http://itinera.${local.sd_suffix}:3000" },
-          { name = "GEODUKT_URL", value = "http://geodukt.${local.sd_suffix}:8100" },
-          { name = "QT_QPA_PLATFORM", value = "offscreen" },
-          { name = "QGIS_PREFIX_PATH", value = "/usr" },
-          { name = "HOME", value = "/tmp" },
-        ]
+        environment = concat(
+          [
+            { name = "TOOL_EXEC_DIR", value = "/app/geolang" },
+            { name = "GEOLANG_TOOL_MEMORY_LIMIT_MB", value = "3072" },
+            { name = "GEOLANG_TOOL_TIMEOUT_SECONDS", value = "840" },
+            { name = "GEOLANG_TOOL_MAX_CONCURRENT", value = "2" },
+            { name = "PTOLEMY_URL", value = "http://ptolemy.${local.sd_suffix}:3000" },
+            { name = "TILETOPIA_URL", value = "http://tiletopia.${local.sd_suffix}:3000" },
+            { name = "ITINERA_URL", value = "http://itinera.${local.sd_suffix}:3000" },
+            { name = "GEODUKT_URL", value = "http://geodukt.${local.sd_suffix}:8100" },
+            { name = "QT_QPA_PLATFORM", value = "offscreen" },
+            { name = "QGIS_PREFIX_PATH", value = "/usr" },
+            { name = "HOME", value = "/tmp" },
+          ],
+          var.enable_geokode ? [{ name = "GEOKODE_URL", value = "http://geokode.${local.sd_suffix}:3000" }] : [],
+        )
         secrets = contains(keys(local.runtime_secret_arns), "geolang_executor") ? [
           { name = "GEOLANG_EXECUTOR_SECRET", valueFrom = local.runtime_secret_arns["geolang_executor"] },
         ] : []

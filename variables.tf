@@ -66,6 +66,22 @@ variable "enable_geokode" {
   description = "Deploy Geokode geocoding service"
   type        = bool
   default     = false
+
+  validation {
+    condition     = !var.enable_geokode || var.enable_s3_tiles
+    error_message = "enable_geokode needs enable_s3_tiles, since geokode copies its index from the tiles bucket."
+  }
+}
+
+variable "geokode_index_version" {
+  description = "Folder under geokode-index/ in the tiles bucket that geokode copies its index from"
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = !var.enable_geokode || var.geokode_index_version != ""
+    error_message = "enable_geokode needs geokode_index_version, the version passed to scripts/publish-geokode-index.sh."
+  }
 }
 
 variable "enable_itinera" {

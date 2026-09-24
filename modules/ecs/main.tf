@@ -80,6 +80,14 @@ variable "services" {
       access_point_id  = string
       access_point_arn = string
     })), {})
+    ephemeral_storage_gib = optional(number)
+    # the module creates volume as task-local storage
+    init_container = optional(object({
+      image          = string
+      command        = list(string)
+      volume         = string
+      container_path = string
+    }))
   }))
 }
 
@@ -316,6 +324,34 @@ resource "aws_cloudwatch_log_group" "services" {
   tags = merge(var.tags, { Service = each.key })
 }
 
+locals {
+  log_configurations = {
+    for name, log_group in aws_cloudwatch_log_group.services : name => {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = log_group.name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "ecs"
+      }
+    }
+  }
+
+  init_container_definitions = {
+    for name, service in var.services : name => service.init_container == null ? [] : [{
+      name      = "${name}-init"
+      image     = service.init_container.image
+      essential = false
+      command   = service.init_container.command
+      mountPoints = [{
+        sourceVolume  = service.init_container.volume
+        containerPath = service.init_container.container_path
+        readOnly      = false
+      }]
+      logConfiguration = local.log_configurations[name]
+    }]
+  }
+}
+
 # ─── Task Definitions ────────────────────────────────────────────────────────
 
 resource "aws_ecs_task_definition" "services" {
@@ -351,9 +387,26 @@ resource "aws_ecs_task_definition" "services" {
     }
   }
 
-  container_definitions = jsonencode([{
+  dynamic "volume" {
+    for_each = each.value.init_container == null ? [] : [each.value.init_container.volume]
+    content {
+      name = volume.value
+    }
+  }
+
+  dynamic "ephemeral_storage" {
+    for_each = each.value.ephemeral_storage_gib == null ? [] : [each.value.ephemeral_storage_gib]
+    content {
+      size_in_gib = ephemeral_storage.value
+    }
+  }
+
+  container_definitions = jsonencode(concat(local.init_container_definitions[each.key], [{
     name  = each.key
     image = each.value.image
+    dependsOn = length(local.init_container_definitions[each.key]) > 0 ? [
+      for init_container in local.init_container_definitions[each.key] : { containerName = init_container.name, condition = "SUCCESS" }
+    ] : null
     portMappings = [{
       containerPort = each.value.container_port
       protocol      = "tcp"
@@ -376,14 +429,7 @@ resource "aws_ecs_task_definition" "services" {
       }
     } : null
 
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        "awslogs-group"         = aws_cloudwatch_log_group.services[each.key].name
-        "awslogs-region"        = var.aws_region
-        "awslogs-stream-prefix" = "ecs"
-      }
-    }
+    logConfiguration = local.log_configurations[each.key]
 
     healthCheck = {
       command     = length(each.value.health_command) > 0 ? each.value.health_command : ["CMD-SHELL", "curl -f http://localhost:${each.value.container_port}${each.value.health_path} || exit 1"]
@@ -392,7 +438,7 @@ resource "aws_ecs_task_definition" "services" {
       retries     = 3
       startPeriod = 60
     }
-  }])
+  }]))
 
   tags = merge(var.tags, { Service = each.key })
 }

@@ -28,6 +28,8 @@ enable_geoplumb  = false
 enable_fenestra  = false
 enable_jupyter   = false
 
+geokode_index_version = ""
+
 # ── Database ─────────────────────────────────────────────────────
 enable_database = true
 db_max_capacity = 2
@@ -43,7 +45,7 @@ enable_dns = false
 # ── Storage and secrets ──────────────────────────────────────────
 enable_efs      = true
 enable_secrets  = true
-enable_s3_tiles = false
+enable_s3_tiles = true
 
 # ── Off for a preview ────────────────────────────────────────────
 enable_bastion     = false
@@ -171,5 +173,9 @@ service_overrides = {
   geolang-executor = {
     cpu    = 2048
     memory = 8192
+  }
+  geokode = {
+    cpu    = 1024
+    memory = 2048
   }
 }

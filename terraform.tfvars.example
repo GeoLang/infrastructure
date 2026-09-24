@@ -49,6 +49,9 @@ environment  = "prod"      # dev | staging | prod
 # enable_viewtopia = true    # Web frontend
 # enable_platform_proxy = true # Public path-routing edge
 
+# Geokode needs an index uploaded with scripts/publish-geokode-index.sh.
+# geokode_index_version = ""
+
 # Keep services stopped until images, data, and every required secret value are
 # ready.
 # runtime_secrets_ready = false

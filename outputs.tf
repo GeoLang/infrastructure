@@ -75,6 +75,11 @@ output "tiles_bucket" {
   value       = var.enable_s3_tiles ? aws_s3_bucket.tiles[0].id : "S3 disabled"
 }
 
+output "geokode_index_url" {
+  description = "S3 prefix that holds one geokode index folder per version"
+  value       = local.geokode_index_url
+}
+
 # ─── ECS ──────────────────────────────────────────────────────────────────────
 
 output "ecs_cluster" {

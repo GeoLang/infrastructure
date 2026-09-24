@@ -28,7 +28,7 @@ Terraform does not build images, populate secret values, load spatial data, crea
 
 ## Hosted preview
 
-`profiles/preview.tfvars` runs nine services: Ptolemy, TileTopia, Agora, Sibyl, geodukt, the GeoLang API and executor, ViewTopia, and the platform proxy. It leaves out Geokode, Itinera, Interiora, geoplumb, Fenestra, and Jupyter, and turns off DNS, the bastion, WAF, GuardDuty and VPC flow logs, backups, autoscaling, Container Insights, and the tiles bucket.
+`profiles/preview.tfvars` runs nine services: Ptolemy, TileTopia, Agora, Sibyl, geodukt, the GeoLang API and executor, ViewTopia, and the platform proxy. It leaves out Geokode, Itinera, Interiora, geoplumb, Fenestra, and Jupyter, and turns off DNS, the bastion, WAF, GuardDuty and VPC flow logs, backups, autoscaling, and Container Insights.
 
 The preview has no domain, so it sets `allow_cleartext_origin = true` and CloudFront reaches the load balancer over plain HTTP, Authorization headers and session cookies included.
 
@@ -94,7 +94,7 @@ The invoke prints one entry per target. Ptolemy's reads `"changed": true` and Ag
 EFS access points provide persistent storage for:
 
 - TileTopia data
-- Geokode and Itinera spatial source data
+- Itinera spatial source data
 - Interiora venue data
 - geoplumb's disk cache
 - Fenestra coverages
@@ -104,9 +104,9 @@ EFS access points provide persistent storage for:
 - GeoLang outputs, user data, and live data shared with geodukt and the executor
 - Jupyter notebooks under `/home/jovyan/work`
 
-Before starting services, place `region.osm.pbf` in the spatial data access point for Geokode. Itinera writes or reads `graph.bin` in that same access point. Place any Fenestra GeoTIFF coverages in its access point. GeoLang downloads Natural Earth data on demand into its own directory, so its access point needs nothing staged. The executor's read-only mount needs a geolang image whose Natural Earth download falls back to the caller's own directory when the shared one is read-only.
+Itinera writes or reads `graph.bin` in the spatial data access point. Place any Fenestra GeoTIFF coverages in its access point. GeoLang downloads Natural Earth data on demand into its own directory, so its access point needs nothing staged. The executor's read-only mount needs a geolang image whose Natural Earth download falls back to the caller's own directory when the shared one is read-only.
 
-The file system policy denies every client that connects without an access point or without TLS. It allows nothing itself, so a client without IAM credentials is refused. Every task mounts with its task role, and each role holds `ClientMount` on the access points its services mount and `ClientWrite` on the ones they mount read-write, never `ClientRootAccess`. The executor and Jupyter each have their own role, so code that escapes either sandbox can reach only that service's access points. The other services share one role. Geokode mounts spatial data read-only, but Itinera writes it through the same role, so that role holds write on it. To stage files, mount one access point with `mount -t efs -o tls,iam,accesspoint=<access point id> <file system id> /mnt`, using credentials that hold `ClientWrite` on it. A plain NFS mount of the file system root is refused.
+The file system policy denies every client that connects without an access point or without TLS. It allows nothing itself, so a client without IAM credentials is refused. Every task mounts with its task role, and each role holds `ClientMount` on the access points its services mount and `ClientWrite` on the ones they mount read-write, never `ClientRootAccess`. The executor and Jupyter each have their own role, so code that escapes either sandbox can reach only that service's access points. The other services share one role. To stage files, mount one access point with `mount -t efs -o tls,iam,accesspoint=<access point id> <file system id> /mnt`, using credentials that hold `ClientWrite` on it. A plain NFS mount of the file system root is refused.
 
 A stack that already runs EFS-backed tasks without IAM mounts has to roll them before the policy lands, or their mounts are refused. The policy depends on the ECS module, but `aws_ecs_service` returns before its deployment finishes, so apply in two steps. The waiter takes at most ten services per call.
 
@@ -117,6 +117,23 @@ terraform apply -var-file=profiles/preview.tfvars
 ```
 
 geoplumb serves the public STAC layers in [containers/geoplumb/layers.toml](containers/geoplumb/layers.toml), a Copernicus DEM hillshade and a Sentinel-2 NDVI, copied into its wrapper image. The configuration has no credentials. The image is built in two steps so the configuration is part of an immutable image.
+
+## Geokode index
+
+Geokode serves an index directory built by `geokode build`, about 6.5 GB for the planet. The index sits in the tiles bucket under `geokode-index/<geokode_index_version>/`. Each geokode task starts with an init container on `public.ecr.aws/aws-cli/aws-cli:2.37.1` that copies that folder into a task-local volume. Geokode starts only once the copy exits 0, mounts the volume read-only at `/index`, and memory-maps it. The task has 30 GiB of ephemeral storage for the index and both images. Every task start copies the whole index, so after a wake or the morning scale-up geokode answers later than the other services.
+
+The copy uses the shared task role. Its `s3-access` policy already grants read, write, and delete on every `geolang-prod-*` bucket, so every service on that role can read the index and can also overwrite it.
+
+To serve a new index on the preview:
+
+1. On the build machine, run `geokode build --pbf planet.osm.pbf --out planet-index`.
+2. Apply once with `enable_s3_tiles = true` so the tiles bucket exists. The preview profile sets it.
+3. Run `./scripts/publish-geokode-index.sh planet-index <version>`. It reads `geokode_index_url` from Terraform state, uploads every file but `meta.json`, then uploads `meta.json`. It takes no `--profile` flag, so export `AWS_PROFILE=geolang` first.
+4. Tag a geokode release and set `geokode = "ghcr.io/geolang/geokode:<tag>"` in `container_images`. Without that entry the preview creates a geokode ECR repository instead, and the service cannot start until `publish-images.sh` pushes the image under a new `image_tag`.
+5. Set `geokode_index_version = "<version>"` and `enable_geokode = true` in `profiles/preview.tfvars`.
+6. Review `terraform plan -var-file=profiles/preview.tfvars`, then apply it. The apply also rolls the platform proxy, the GeoLang API, and the executor, since their environments gain the geokode route and address.
+
+Validation rejects `enable_geokode = true` with an empty `geokode_index_version` or with `enable_s3_tiles = false`. Publish each build under a new version. The bucket keeps versioning on, so republishing a version keeps the replaced objects as noncurrent versions.
 
 ## Runtime secrets
 
@@ -407,17 +424,18 @@ terraform validate
 
 The GitHub workflow runs the same format and validation checks with Terraform 1.16.1, since `fmt` output tracks the toolchain version. `-backend=false` keeps that job away from the state bucket. Its manual plan job takes a profile, runs a real `terraform init`, and needs AWS credentials, both for the bucket and because `terraform plan` reads account and region data sources. It takes a long-lived access key pair from the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets, not an OIDC role that mints a short-lived one. No runtime application credential is passed to Terraform.
 
-The three shell commands and the two Lambda sources have their own tests, which stub the AWS CLI, Docker, Terraform, and boto3 and so contact nothing:
+The four shell commands and the two Lambda sources have their own tests, which stub the AWS CLI, Docker, Terraform, and boto3 and so contact nothing:
 
 ```bash
 bash tests/test_publish_images.sh
+bash tests/test_publish_geokode_index.sh
 bash tests/test_put_runtime_secret.sh
 bash tests/test_platform_scale.sh
 python3 tests/test_refresh_database_secrets.py
 python3 tests/test_demo_scaling.py
 ```
 
-The workflow runs all five on every push to master and every pull request.
+The workflow runs all six on every push to master and every pull request.
 
 ## Important outputs
 
@@ -430,13 +448,14 @@ The workflow runs all five on every push to master and every pull request.
 - `database_master_user_secret_arn`
 - `runtime_secret_arns`
 - `efs_access_points`
+- `geokode_index_url`
 - `service_discovery_namespace`
 
 ## Monitoring and unused resources
 
 Each service gets a CPU and a memory alarm, the database writer gets CPU and free storage alarms, and the load balancer gets a 5xx alarm. Every alarm publishes to one SNS topic. Set `alert_email` to subscribe an address to it. AWS emails a confirmation link that has to be accepted before any alarm is delivered. Left empty, the topic has no subscriber and an alarm reaches nobody. `terraform output dashboard_url` links the CloudWatch dashboard.
 
-The tiles S3 bucket has no consumer. No service reads or writes it, so it stays empty.
+The tiles S3 bucket holds only the geokode index.
 
 ## Safe apply blockers
 
@@ -444,7 +463,8 @@ The infrastructure can be planned before these are resolved, with all services h
 
 - The Ptolemy and Agora database URL secrets must use `sslmode=verify-full` with `sslrootcert`, or they cannot connect to a database that forces SSL.
 - Every enabled ECR image must be pushed under the tag in `image_tag`.
-- EFS spatial and coverage data must be staged on a profile that runs Geokode, Itinera, or Fenestra.
+- EFS spatial and coverage data must be staged on a profile that runs Itinera or Fenestra.
+- A profile that runs Geokode needs its index published under `geokode_index_version`.
 - All required secret containers must have a current value.
 - DNS delegation and ACM validation must complete when the platform profile uses `geolang.com`. Until the certificate exists, that profile's plan stops on the HTTPS listener count, which cannot be resolved before apply.
 - Set `enable_guardduty = false` when the account already has a detector in the deployment region. `aws_guardduty_detector` fails against an account that already has one.

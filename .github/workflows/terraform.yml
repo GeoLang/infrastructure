@@ -53,6 +53,9 @@ jobs:
       - name: Publish images
         run: bash tests/test_publish_images.sh
 
+      - name: Publish geokode index
+        run: bash tests/test_publish_geokode_index.sh
+
       - name: Put runtime secret
         run: bash tests/test_put_runtime_secret.sh
 
