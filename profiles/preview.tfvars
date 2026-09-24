@@ -111,6 +111,8 @@ sibyl_limits = {
   SIBYL_TOKENS_PER_USER_PER_DAY  = 2000000
   SIBYL_RUNS_PER_ADMIN_PER_DAY   = 500
   SIBYL_TOKENS_PER_ADMIN_PER_DAY = 50000000
+  # 50 USD over TILETOPIA_MAX_USERS at the gpt-oss prices, honoured from sibyl v0.1.3
+  SIBYL_TOKENS_PER_USER_PER_MONTH = 500000
 }
 
 # ── geolang-api caps ─────────────────────────────────────────────
