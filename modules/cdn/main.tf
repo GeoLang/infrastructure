@@ -74,7 +74,8 @@ locals {
   # scripts only from the bundle or a blob url, data sources open because users add their own tile hosts
   content_security_policy = join("; ", [
     "default-src 'self'",
-    "script-src 'self' 'wasm-unsafe-eval' blob:",
+    # unsafe-eval because cesium's bundled knockout evaluates a string once at load
+    "script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval' blob:",
     "worker-src 'self' blob:",
     "style-src 'self' 'unsafe-inline'",
     "img-src * data: blob:",
