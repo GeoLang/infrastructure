@@ -310,7 +310,7 @@ It reads the cluster name from `terraform output -raw ecs_cluster`, lists the cl
 
 `nightly_scale_down` does the down half on a schedule. Set a timezone and an hour and each service gets an EventBridge schedule that calls `ecs:UpdateService` with a desired count of 0 at that local hour. The preview profile uses 23:00 America/Toronto. The tasks stop, the cluster pauses five minutes later, and `platform-scale.sh up` or a Terraform apply brings both back.
 
-A second schedule per service does the up half at `morning_scale_up_hour` in the same timezone, 08:00 by default, so the preview runs from 08:00 to 23:00 Toronto time. It sets the desired count Terraform gives the service, which is 0 while `runtime_secrets_ready` is false. The morning schedule also undoes a manual scale-down, so before an absence set `nightly_scale_down = null` and apply to drop both schedules.
+A second schedule per service does the up half at `morning_scale_up_hour` in the same timezone, 08:00 by default, so the preview runs from 08:00 to 23:00 Toronto time. It sets the desired count Terraform gives the service, which is 0 while `runtime_secrets_ready` is false. The morning schedule also undoes a manual scale-down. To keep the stack stopped through an absence, set `service_defaults.desired_count = 0` and apply: the schedules and the wake function then start nothing, and setting it back to 1 and applying resumes.
 
 ## Demo landing page
 

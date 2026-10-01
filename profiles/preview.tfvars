@@ -77,12 +77,12 @@ runtime_secrets_ready = true
 image_tag = "v0.1.7"
 
 container_images = {
-  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.4"
-  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.3"
+  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.5"
+  tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.4"
   agora       = "ghcr.io/geolang/agora:v0.1.1"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.3"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.10"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.11"
   geokode     = "ghcr.io/geolang/geokode:v0.4.0"
 }
 
@@ -161,7 +161,7 @@ tiletopia_limits = {
 service_defaults = {
   cpu           = 256
   memory        = 512
-  desired_count = 1
+  desired_count = 0
 }
 
 service_overrides = {
