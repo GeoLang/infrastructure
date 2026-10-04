@@ -58,10 +58,11 @@ class FakeRdsDataClient:
     class exceptions:
         DatabaseResumingException = DatabaseResumingException
 
-    def __init__(self, records=None, role_records=None, resuming_failures=0):
+    def __init__(self, records=None, role_records=None, resuming_failures=0, available_extensions=()):
         self.records = [] if records is None else records
         self.role_records = [] if role_records is None else role_records
         self.resuming_failures = resuming_failures
+        self.available_extensions = available_extensions
         self.calls = []
 
     def execute_statement(self, **kwargs):
@@ -71,6 +72,8 @@ class FakeRdsDataClient:
         self.calls.append(kwargs)
         if kwargs["sql"].startswith("SELECT 1 FROM pg_roles"):
             return {"records": self.role_records}
+        if kwargs["sql"] == "SELECT name FROM pg_available_extensions":
+            return {"records": [[{"stringValue": name}] for name in self.available_extensions]}
         if kwargs["sql"].startswith("SELECT"):
             return {"records": self.records}
         return {}
@@ -129,10 +132,36 @@ def agora_target(database_name="agora", role_name="agora"):
         "admin_database": "ptolemy",
         "cluster_name": "geolang-prod",
         "service_name": "geolang-prod-agora",
+        "extensions": [],
+    }
+
+
+def ptolemy_role_target(extensions=("postgis", "postgis_topology", "postgis_raster", "pointcloud")):
+    return {
+        "name": "ptolemy",
+        "source_secret_arn": "source-secret",
+        "target_secret_arn": "target-secret",
+        "host": "database.example.internal",
+        "port": 5432,
+        "database_name": "ptolemy",
+        "role_name": "ptolemy_app",
+        "cluster_arn": "arn:aws:rds:us-west-2:000152811496:cluster:geolang-prod-postgis",
+        "admin_database": "ptolemy",
+        "cluster_name": "geolang-prod",
+        "service_name": "geolang-prod-ptolemy",
+        "extensions": list(extensions),
     }
 
 
 class RefreshDatabaseSecretsTests(unittest.TestCase):
+    def assert_hands_objects_from_master_to_role(self, sql, master_username, role_name):
+        self.assertTrue(sql.startswith("DO $handover$"))
+        self.assertNotIn("REASSIGN", sql)
+        self.assertIn("dependency.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())", sql)
+        self.assertIn(f"dependency.refobjid = CAST('{master_username}' AS regrole)", sql)
+        self.assertIn("link.deptype = 'e'", sql)
+        self.assertEqual(sql.count(f"'{role_name}'"), 2)
+
     def test_build_database_url_encodes_credentials_and_database_name(self):
         database_url = REFRESH_DATABASE_SECRETS.build_database_url(
             "user@example.com",
@@ -303,7 +332,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
         self.assertEqual(sleeps, [REFRESH_DATABASE_SECRETS.RESUME_RETRY_DELAY_SECONDS] * 2)
         self.assertEqual(
             [call["sql"].split()[0] for call in rds_data_client.calls],
-            ["SELECT", "SELECT", "CREATE", "GRANT", "CREATE", "REASSIGN"],
+            ["SELECT", "SELECT", "CREATE", "GRANT", "CREATE", "REVOKE", "DO"],
         )
 
     def test_cluster_that_never_resumes_fails(self):
@@ -339,7 +368,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             rds_data_client,
         )
 
-        self.assertEqual(len(rds_data_client.calls), 6)
+        self.assertEqual(len(rds_data_client.calls), 7)
         self.assertEqual(
             rds_data_client.calls[0],
             {
@@ -358,11 +387,12 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             rds_data_client.calls[4]["sql"],
             'CREATE DATABASE "agora" OWNER "agora"',
         )
-        self.assertEqual(rds_data_client.calls[5]["database"], "agora")
         self.assertEqual(
             rds_data_client.calls[5]["sql"],
-            'REASSIGN OWNED BY "ptolemy" TO "agora"',
+            'REVOKE ALL ON DATABASE "agora" FROM PUBLIC',
         )
+        self.assertEqual(rds_data_client.calls[6]["database"], "agora")
+        self.assert_hands_objects_from_master_to_role(rds_data_client.calls[6]["sql"], "ptolemy", "agora")
 
     def test_master_url_moves_onto_the_role(self):
         master_url = REFRESH_DATABASE_SECRETS.build_database_url(
@@ -389,7 +419,7 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
         self.assertEqual(result, {"name": "agora", "changed": True})
         self.assertEqual(
             [call["sql"].split()[0] for call in rds_data_client.calls],
-            ["SELECT", "SELECT", "CREATE", "GRANT", "ALTER", "REASSIGN"],
+            ["SELECT", "SELECT", "CREATE", "GRANT", "ALTER", "REVOKE", "DO"],
         )
         self.assertEqual(
             rds_data_client.calls[3]["sql"],
@@ -399,11 +429,8 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
             rds_data_client.calls[4]["sql"],
             'ALTER DATABASE "agora" OWNER TO "agora"',
         )
-        self.assertEqual(rds_data_client.calls[5]["database"], "agora")
-        self.assertEqual(
-            rds_data_client.calls[5]["sql"],
-            'REASSIGN OWNED BY "ptolemy" TO "agora"',
-        )
+        self.assertEqual(rds_data_client.calls[6]["database"], "agora")
+        self.assert_hands_objects_from_master_to_role(rds_data_client.calls[6]["sql"], "ptolemy", "agora")
         role_password = rds_data_client.calls[2]["sql"].split("PASSWORD '")[1].rstrip("'")
         self.assertEqual(
             secrets_client.put_calls[0]["SecretString"],
@@ -511,6 +538,105 @@ class RefreshDatabaseSecretsTests(unittest.TestCase):
                 "agora",
             ),
         )
+
+    def test_ptolemy_master_url_moves_onto_ptolemy_app(self):
+        master_url = REFRESH_DATABASE_SECRETS.build_database_url(
+            "ptolemy",
+            "master-password",
+            "database.example.internal",
+            5432,
+            "ptolemy",
+        )
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "master-password"}),
+            target_value=master_url,
+        )
+        ecs_client = FakeEcsClient()
+        rds_data_client = FakeRdsDataClient(
+            records=[[{"longValue": 1}]],
+            available_extensions=["pg_trgm", "postgis_raster", "postgis", "postgis_topology", "vector"],
+        )
+
+        result = REFRESH_DATABASE_SECRETS.refresh_database_secret(
+            ptolemy_role_target(),
+            secrets_client,
+            ecs_client,
+            rds_data_client,
+        )
+
+        self.assertEqual(result, {"name": "ptolemy", "changed": True})
+        statements = [call["sql"] for call in rds_data_client.calls]
+        role_password = statements[2].split("PASSWORD '")[1].rstrip("'")
+        self.assertEqual(
+            statements[:10],
+            [
+                "SELECT 1 FROM pg_database WHERE datname = :name",
+                "SELECT 1 FROM pg_roles WHERE rolname = :name",
+                f"CREATE ROLE \"ptolemy_app\" WITH LOGIN PASSWORD '{role_password}'",
+                'GRANT "ptolemy_app" TO "ptolemy" WITH INHERIT TRUE',
+                'ALTER DATABASE "ptolemy" OWNER TO "ptolemy_app"',
+                'REVOKE ALL ON DATABASE "ptolemy" FROM PUBLIC',
+                "SELECT name FROM pg_available_extensions",
+                'CREATE EXTENSION IF NOT EXISTS "postgis"',
+                'CREATE EXTENSION IF NOT EXISTS "postgis_topology"',
+                'CREATE EXTENSION IF NOT EXISTS "postgis_raster"',
+            ],
+        )
+        self.assertEqual(len(statements), 11)
+        self.assert_hands_objects_from_master_to_role(statements[10], "ptolemy", "ptolemy_app")
+        self.assertEqual(
+            [call["database"] for call in rds_data_client.calls],
+            ["ptolemy"] * 11,
+        )
+        self.assertEqual(
+            secrets_client.put_calls[0]["SecretString"],
+            REFRESH_DATABASE_SECRETS.build_database_url(
+                "ptolemy_app",
+                role_password,
+                "database.example.internal",
+                5432,
+                "ptolemy",
+            ),
+        )
+        self.assertEqual(len(ecs_client.update_calls), 1)
+
+    def test_written_ptolemy_app_url_survives_a_master_rotation(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "rotated-password"}),
+            target_value="postgres://ptolemy_app:role-password@database.example.internal:5432/ptolemy",
+        )
+        ecs_client = FakeEcsClient()
+        rds_data_client = FakeRdsDataClient()
+
+        result = REFRESH_DATABASE_SECRETS.refresh_database_secret(
+            ptolemy_role_target(),
+            secrets_client,
+            ecs_client,
+            rds_data_client,
+        )
+
+        self.assertEqual(result, {"name": "ptolemy", "changed": False})
+        self.assertEqual(rds_data_client.calls, [])
+        self.assertEqual(secrets_client.put_calls, [])
+        self.assertEqual(ecs_client.update_calls, [])
+
+    def test_invalid_extension_name_is_refused(self):
+        secrets_client = FakeSecretsClient(
+            json.dumps({"username": "ptolemy", "password": "master-password"}),
+            target_missing=True,
+        )
+        rds_data_client = FakeRdsDataClient(records=[[{"longValue": 1}]])
+
+        with self.assertRaisesRegex(ValueError, "extension name must match"):
+            REFRESH_DATABASE_SECRETS.refresh_database_secret(
+                ptolemy_role_target(extensions=['postgis"; DROP DATABASE agora']),
+                secrets_client,
+                FakeEcsClient(),
+                rds_data_client,
+            )
+
+        self.assertEqual(rds_data_client.calls, [])
+        self.assertEqual(secrets_client.put_calls, [])
 
     def test_invalid_role_name_is_refused(self):
         secrets_client = FakeSecretsClient(

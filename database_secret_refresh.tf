@@ -11,11 +11,27 @@ locals {
         host              = module.database[0].address
         port              = module.database[0].port
         database_name     = var.db_name
-        role_name         = ""
-        cluster_arn       = ""
-        admin_database    = ""
+        role_name         = "ptolemy_app"
+        cluster_arn       = module.database[0].arn
+        admin_database    = var.db_name
         cluster_name      = module.ecs.cluster_name
         service_name      = module.ecs.service_names["ptolemy"]
+        # the list ptolemy's extensions migration tries
+        extensions = [
+          "postgis",
+          "postgis_topology",
+          "postgis_raster",
+          "pgcrypto",
+          "pg_trgm",
+          "pgrouting",
+          "postgis_sfcgal",
+          "h3",
+          "pg_partman",
+          "vector",
+          "pointcloud",
+          "pointcloud_postgis",
+          "mobilitydb",
+        ]
       }
     } : {},
     var.enable_database && var.enable_agora ? {
@@ -31,6 +47,7 @@ locals {
         admin_database    = var.db_name
         cluster_name      = module.ecs.cluster_name
         service_name      = module.ecs.service_names["agora"]
+        extensions        = []
       }
     } : {},
   )
@@ -75,6 +92,14 @@ resource "terraform_data" "database_secret_refresh" {
         ))
       ])
       error_message = "enable_database_secret_refresh requires full Secrets Manager ARNs for Ptolemy and Agora runtime URL secrets."
+    }
+
+    # a role named like the master user would read as already handed over and never refresh
+    precondition {
+      condition = alltrue([
+        for target in values(local.database_secret_refresh_targets) : target.role_name != var.db_username
+      ])
+      error_message = "db_username must differ from the ptolemy_app and agora database role names."
     }
   }
 }

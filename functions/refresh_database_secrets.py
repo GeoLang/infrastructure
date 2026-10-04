@@ -14,6 +14,51 @@ sleep = time.sleep
 RDS_CA_BUNDLE_PATH = "/etc/ssl/rds-global-bundle.pem"
 POSTGRES_IDENTIFIER_PATTERN = re.compile(r"^[a-z_][a-z0-9_]*$")
 ROLE_PASSWORD_BYTES = 32
+# REASSIGN OWNED would also hand over every other database the master user owns
+DATABASE_OBJECT_HANDOVER_SQL = """DO $handover$
+DECLARE
+    owned record;
+BEGIN
+    SET LOCAL search_path = pg_catalog, pg_temp;
+    FOR owned IN
+        SELECT identified.type, identified.identity
+        FROM pg_shdepend AS dependency
+        CROSS JOIN LATERAL pg_identify_object(dependency.classid, dependency.objid, 0) AS identified
+        WHERE dependency.dbid = (SELECT oid FROM pg_database WHERE datname = current_database())
+            AND dependency.refclassid = CAST('pg_authid' AS regclass)
+            AND dependency.refobjid = CAST('{master_username}' AS regrole)
+            AND dependency.deptype = 'o'
+            AND dependency.classid NOT IN (
+                CAST('pg_extension' AS regclass),
+                CAST('pg_default_acl' AS regclass),
+                CAST('pg_user_mapping' AS regclass)
+            )
+            AND NOT EXISTS (
+                SELECT 1 FROM pg_depend AS link
+                WHERE link.classid = dependency.classid
+                    AND link.objid = dependency.objid
+                    AND (link.deptype = 'e' OR (link.refclassid = CAST('pg_class' AS regclass) AND link.deptype IN ('a', 'i')))
+            )
+        ORDER BY dependency.classid = CAST('pg_namespace' AS regclass) DESC
+    LOOP
+        EXECUTE format('ALTER %s %s OWNER TO %I', replace(owned.type, 'composite type', 'type'), owned.identity, '{role_name}');
+    END LOOP;
+    FOR owned IN
+        SELECT CAST(member.oid AS regclass) AS name, member.relkind
+        FROM pg_class AS member
+        JOIN pg_depend AS link ON link.classid = CAST('pg_class' AS regclass) AND link.objid = member.oid AND link.deptype = 'e'
+        WHERE member.relkind IN ('r', 'S')
+    LOOP
+        EXECUTE format(
+            'GRANT %s ON %s %s TO %I',
+            CASE owned.relkind WHEN 'S' THEN 'USAGE, SELECT, UPDATE' ELSE 'SELECT, INSERT, UPDATE, DELETE' END,
+            CASE owned.relkind WHEN 'S' THEN 'SEQUENCE' ELSE 'TABLE' END,
+            owned.name,
+            '{role_name}'
+        );
+    END LOOP;
+END
+$handover$"""
 
 
 def build_database_url(username, password, host, port, database_name):
@@ -136,10 +181,36 @@ def create_login_role(rds_data_client, target, password):
     )
 
 
+# creating these needs rds_superuser, which the role does not get
+def create_available_extensions(rds_data_client, target):
+    extension_names = target["extensions"]
+    if not extension_names:
+        return
+
+    database_name = target["database_name"]
+    available = run_statement(
+        rds_data_client,
+        target,
+        "SELECT name FROM pg_available_extensions",
+        database=database_name,
+    )
+    available_names = {record[0]["stringValue"] for record in available.get("records", [])}
+    for extension_name in extension_names:
+        if extension_name in available_names:
+            run_statement(
+                rds_data_client,
+                target,
+                f'CREATE EXTENSION IF NOT EXISTS "{extension_name}"',
+                database=database_name,
+            )
+
+
 def hand_database_to_role(rds_data_client, target, master_username, role_password):
     validate_identifier("master username", master_username)
     database_name = target["database_name"]
     role_name = target["role_name"]
+    for extension_name in target["extensions"]:
+        validate_identifier("extension name", extension_name)
 
     database_present = database_is_present(rds_data_client, target)
     create_login_role(rds_data_client, target, role_password)
@@ -153,12 +224,14 @@ def hand_database_to_role(rds_data_client, target, master_username, role_passwor
         run_statement(rds_data_client, target, f'ALTER DATABASE "{database_name}" OWNER TO "{role_name}"')
     else:
         run_statement(rds_data_client, target, f'CREATE DATABASE "{database_name}" OWNER "{role_name}"')
+    run_statement(rds_data_client, target, f'REVOKE ALL ON DATABASE "{database_name}" FROM PUBLIC')
 
+    create_available_extensions(rds_data_client, target)
     # tables the master user created before the role existed still belong to it
     run_statement(
         rds_data_client,
         target,
-        f'REASSIGN OWNED BY "{master_username}" TO "{role_name}"',
+        DATABASE_OBJECT_HANDOVER_SQL.format(master_username=master_username, role_name=role_name),
         database=database_name,
     )
 

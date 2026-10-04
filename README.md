@@ -48,7 +48,9 @@ The Jupyter image is pinned to `quay.io/jupyter/scipy-notebook:2025-12-31` by `j
 
 ## Databases and storage
 
-Ptolemy and Agora share one encrypted Aurora PostgreSQL 17.10 cluster with a single `db.serverless` writer. The cluster holds two databases, `ptolemy` and `agora`. Ptolemy connects with the RDS-managed master credential, which RDS keeps in Secrets Manager. Agora connects as an `agora` login role that owns the `agora` database, so its migrations create schema without the master password. Ptolemy enables its required PostGIS extensions during its own migrations.
+Ptolemy and Agora share one encrypted Aurora PostgreSQL 17.10 cluster with a single `db.serverless` writer. The cluster holds two databases, `ptolemy` and `agora`. Ptolemy connects as a `ptolemy_app` login role that owns the `ptolemy` database, and Agora as an `agora` login role that owns the `agora` database. Each service's migrations create schema without the master password, and neither role can create roles or connect to the other's database. The master user is `db_username`, `ptolemy` by default, which is why Ptolemy's role has a different name. RDS keeps the master credential in Secrets Manager, and no service connects with it.
+
+PostGIS and the other extensions Ptolemy's migrations create need `rds_superuser`, which `ptolemy_app` does not have. The Lambda creates them as the master user before handing the database over, so a fresh database and an existing one migrate the same way. The extensions and their objects stay with the master user. `ptolemy_app` gets row access to their tables, which `topology.CreateTopology` needs for `topology.topology`.
 
 `serverlessv2_scaling_configuration` runs from 0 to `db_max_capacity` ACUs and pauses the cluster after 300 seconds without a connection. Pausing only happens while the tasks are scaled to zero. Ptolemy's delivery worker polls every 5 seconds and Agora's watch scheduler every 30, so one running task of either keeps the cluster awake. Ptolemy's ECS health check uses `/api/v1/healthz` rather than `/api/v1/readyz` for the same reason. `readyz` runs `SELECT 1`, and the check fires every 30 seconds.
 
@@ -58,22 +60,24 @@ Do not use `sslmode=require` here. Under `require`, sqlx installs a certificate 
 
 The URL must name the RDS endpoint directly, since a CNAME in front of it fails hostname verification. Each service image fetches the AWS RDS global CA bundle to the path above during its build.
 
-Terraform creates neither the `agora` database nor the `agora` role, because that would put a database administrator credential in configuration and state. The refresh Lambda creates both through the RDS Data API, which the cluster exposes with `enable_http_endpoint`.
+Terraform creates neither the `agora` database nor the two roles, because that would put a database administrator credential in configuration and state. The refresh Lambda creates them through the RDS Data API, which the cluster exposes with `enable_http_endpoint`.
 
-The username in `agora_database_url` tells the Lambda what to do. When it already reads `agora`, the Lambda makes no Data API call at all. That matters because any such call resumes a paused cluster, and the schedule runs every 15 minutes. When the secret is empty or its username is still the master user, the Lambda:
+The username in each database URL secret tells the Lambda what to do. When it already reads the service's role, the Lambda makes no Data API call for it. That matters because any such call resumes a paused cluster, and the schedule runs every 15 minutes. When the secret is empty or its username is still the master user, the Lambda:
 
 1. generates a 32-byte password
-2. creates the `agora` role with it, or resets the password of an existing one
-3. grants the master user inheriting membership in that role, which `REASSIGN OWNED` needs
+2. creates the role with it, or resets the password of an existing one
+3. grants the master user inheriting membership in that role, which the ownership changes need
 4. creates the database owned by that role, or hands an existing database over with `ALTER DATABASE ... OWNER TO`
-5. runs `REASSIGN OWNED` inside it, so tables Agora's migrations created as the master user become the role's
-6. writes the URL and forces one Agora deployment
+5. revokes the default `PUBLIC` privileges on that database, so no other role can connect to it
+6. creates the service's extensions that the cluster offers, which is none for Agora
+7. inside the database, hands every object the master user owns there to the role, except extensions and their objects, and grants the role row access to extension tables
+8. writes the URL and forces one deployment of the service
 
-Every rerun takes the same path until the write lands, so a failure part way through only costs a repeat.
+Step 7 does not use `REASSIGN OWNED`, because that also hands over every database the master user owns, whichever database it runs in. Every rerun takes the same path until the write lands, so a failure part way through only costs a repeat.
 
-It refuses any database, role, or master user name outside `^[a-z_][a-z0-9_]*$`. The password reaches the `agora_database_url` secret and nothing else. It is not in Terraform configuration or state, not in a process argument, not in a log, and not in CloudTrail, which records `sql` as `**********` for Data API calls.
+It refuses any database, role, extension, or master user name outside `^[a-z_][a-z0-9_]*$`. The password reaches the service's URL secret and nothing else. It is not in Terraform configuration or state, not in a process argument, not in a log, and not in CloudTrail, which records `sql` as `**********` for Data API calls.
 
-To test a rotation end to end, force one and watch both services come back. The managed secret takes a minute or two to hold the new password, and the Lambda's schedule would pick it up within 15 minutes anyway, so the invoke below only saves the wait. It runs for as long as the ECS deployment takes:
+To test a rotation end to end, force one and check that neither service notices:
 
 ```bash
 aws rds modify-db-cluster --profile geolang --db-cluster-identifier geolang-prod-postgis \
@@ -82,14 +86,11 @@ aws rds modify-db-cluster --profile geolang --db-cluster-identifier geolang-prod
 aws lambda invoke --profile geolang --cli-read-timeout 0 \
   --function-name geolang-prod-database-secret-refresh /dev/stdout
 
-aws ecs wait services-stable --profile geolang --cluster geolang-prod \
-  --services geolang-prod-ptolemy geolang-prod-agora
-
 curl -si https://d2dkw27j378mpo.cloudfront.net/api/v1/healthz | head -1
 curl -si https://d2dkw27j378mpo.cloudfront.net/agora/health | head -1
 ```
 
-The invoke prints one entry per target. Ptolemy's reads `"changed": true` and Agora's reads `"changed": false`, because only Ptolemy's URL carries the master password. A `false` for Ptolemy means the rotation has not reached the managed secret yet, so invoke again. Both health routes answer `200`.
+The invoke prints one entry per target, and both read `"changed": false`, because neither URL carries the master password. Both health routes answer `200`.
 
 EFS access points provide persistent storage for:
 
@@ -157,9 +158,9 @@ Terraform creates no secret versions. Populate the four operator-managed values 
 ./scripts/put-runtime-secret.sh jupyter_token
 ```
 
-Do not use this command for the two database URLs. When `enable_database_secret_refresh` is true, Terraform deploys a Python 3.13 Lambda and an EventBridge schedule for those values. Every 15 minutes it reads the RDS-managed credentials, builds Ptolemy's verified direct-endpoint URL, updates the secret if it changed, forces Ptolemy's ECS service to deploy new tasks, and waits for the service to stabilize. A failed ECS update restores the previous secret version so the next schedule retries. No password enters Terraform configuration, state, process arguments, or logs.
+Do not use this command for the two database URLs. When `enable_database_secret_refresh` is true, Terraform deploys a Python 3.13 Lambda and an EventBridge schedule for those values. Every 15 minutes it checks each URL secret, and for one that is not yet on its role it runs the steps above, writes the verified direct-endpoint URL, forces the service's ECS deployment, and waits for the service to stabilize. A failed ECS update restores the previous secret version so the next schedule retries. No password enters Terraform configuration, state, process arguments, or logs.
 
-The first scheduled run creates the `agora` role and database and writes both URL secret versions. From then on the Lambda only rewrites Ptolemy's URL. RDS rotates the managed master password every seven days by default, so new Ptolemy connections can fail between a rotation and the next run. Agora's URL keeps the `agora` role's password, which no rotation touches, so a master rotation does not redeploy Agora.
+The first scheduled run creates both roles and the `agora` database and writes both URL secret versions. From then on the Lambda makes no change. RDS rotates the managed master password every seven days by default, and since neither URL carries it, a rotation redeploys neither service.
 
 Existing secret resources can be supplied through `runtime_secret_arns`. Keys in that map override Terraform-managed secret ARNs. The two database URL targets must be full Secrets Manager ARNs when automatic refresh is enabled. Other runtime values may use Secrets Manager or SSM. If an existing secret uses a customer managed KMS key, grant the ECS execution role permission to decrypt it. The refresh Lambda has no wildcard KMS permission, so a customer managed key for either database secret needs an explicit policy change before use.
 
@@ -261,7 +262,7 @@ After the apply that creates the load balancer:
 
 1. Run `./scripts/publish-images.sh <image_tag>` to build and push every enabled ECR image.
 2. Stage the required files in EFS through their access points.
-3. Populate the operator-managed runtime secrets and wait for the database refresh job to create the `agora` role and database and both URL secret versions.
+3. Populate the operator-managed runtime secrets and wait for the database refresh job to create the `ptolemy_app` and `agora` roles, the `agora` database, and both URL secret versions.
 4. On a profile that runs Jupyter, give the Jupyter token to the people who need notebooks. Each user pastes it into ViewTopia's notebook settings in their own browser.
 5. Set `runtime_secrets_ready = true`.
 6. Review a new plan before applying it.

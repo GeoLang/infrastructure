@@ -81,7 +81,7 @@ container_images = {
   tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.4"
   agora       = "ghcr.io/geolang/agora:v0.1.1"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.3"
-  geodukt     = "ghcr.io/geolang/geodukt:v0.2.0"
+  geodukt     = "ghcr.io/geolang/geodukt:v0.2.1"
   geolang-api = "ghcr.io/geolang/geolang:v0.1.11"
   geokode     = "ghcr.io/geolang/geokode:v0.4.0"
 }

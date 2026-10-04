@@ -541,7 +541,7 @@ module "ecs" {
         desired_count     = var.runtime_secrets_ready ? local.service_sizing["geodukt"].desired_count : 0
         container_port    = 8100
         health_path       = "/health"
-        command           = ["serve", "--bind", "0.0.0.0:8100"]
+        command           = ["serve", "--bind", "0.0.0.0:8100", "--caller-root", "outputs", "--caller-root", "user_data"]
         working_directory = "/app/geolang"
         user              = "1000:1000"
         environment = [
