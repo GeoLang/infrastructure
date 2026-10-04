@@ -77,12 +77,12 @@ runtime_secrets_ready = true
 image_tag = "v0.1.7"
 
 container_images = {
-  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.5"
+  ptolemy     = "ghcr.io/geolang/ptolemy:v0.2.6"
   tiletopia   = "ghcr.io/geolang/tiletopia:v0.4.4"
   agora       = "ghcr.io/geolang/agora:v0.1.1"
   sibyl       = "ghcr.io/geolang/sibyl:v0.1.3"
   geodukt     = "ghcr.io/geolang/geodukt:v0.2.1"
-  geolang-api = "ghcr.io/geolang/geolang:v0.1.11"
+  geolang-api = "ghcr.io/geolang/geolang:v0.1.12"
   geokode     = "ghcr.io/geolang/geokode:v0.4.0"
 }
 
