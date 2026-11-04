@@ -33,6 +33,8 @@ enable_jupyter          = true
 enable_viewtopia        = true
 enable_platform_proxy   = true
 
+geokode_index_version = "planet-260914-v2"
+
 # ── Database ─────────────────────────────────────────────────────
 enable_database = true
 db_max_capacity = 2
