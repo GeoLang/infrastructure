@@ -2,7 +2,7 @@
 
 Terraform for the GeoLang platform on AWS: ECS Fargate services behind CloudFront and one Application Load Balancer, with an Aurora Serverless v2 PostgreSQL cluster. `profiles/platform.tfvars` runs every service in viewtopia's `docker-compose.platform.yml` except Collecta and the aavaaz speech service. `profiles/preview.tfvars` is the smaller hosted subset, and `profiles/minimal.tfvars` runs four tasks with no database.
 
-The preview profile runs in us-east-1 and serves at the CloudFront hostname in `terraform output platform_url`. The platform and minimal profiles have never been applied, so their sequences below are written from the configuration rather than from a run.
+The preview profile deploys to us-east-1 at the CloudFront hostname in `terraform output platform_url`, and it is paused: `service_defaults.desired_count = 0` in the profile leaves every service with no tasks, so the viewer does not load. [Scaling the preview up and down](#scaling-the-preview-up-and-down) has the steps to resume. The platform and minimal profiles have never been applied, so their sequences below are written from the configuration rather than from a run.
 
 Terraform does not build images, populate secret values, load spatial data, create application users, or run database migrations itself. ECS services start at a desired count of zero until `runtime_secrets_ready` is set to `true`.
 
@@ -28,13 +28,13 @@ Terraform does not build images, populate secret values, load spatial data, crea
 
 ## Hosted preview
 
-`profiles/preview.tfvars` runs nine services: Ptolemy, TileTopia, Agora, Sibyl, geodukt, the GeoLang API and executor, ViewTopia, and the platform proxy. It leaves out Geokode, Itinera, Interiora, geoplumb, Fenestra, and Jupyter, and turns off DNS, the bastion, WAF, GuardDuty and VPC flow logs, backups, autoscaling, and Container Insights.
+`profiles/preview.tfvars` enables ten services: Ptolemy, TileTopia, Agora, Sibyl, geodukt, Geokode, the GeoLang API and executor, ViewTopia, and the platform proxy. It leaves out Itinera, Interiora, geoplumb, Fenestra, and Jupyter, and turns off DNS, the bastion, WAF, GuardDuty and VPC flow logs, backups, autoscaling, and Container Insights.
 
 The preview has no domain, so it sets `allow_cleartext_origin = true` and CloudFront reaches the load balancer over plain HTTP, Authorization headers and session cookies included.
 
-Six services pull ghcr images named with their tags in `container_images`: Ptolemy, TileTopia, Agora, Sibyl, geodukt, and `geolang` for both the GeoLang API and the executor. A service named in `container_images` gets no ECR repository, so the preview creates two repositories, ViewTopia and the platform proxy, and `publish-images.sh` builds only those two from the sibling checkouts. ViewTopia is built into ECR because the Carto API key is a build argument and viewtopia's release workflow builds the ghcr image without one.
+Eight services pull seven ghcr images named with their tags in `container_images`: Ptolemy, TileTopia, Agora, Sibyl, geodukt, Geokode, and `geolang` for both the GeoLang API and the executor. A service named in `container_images` gets no ECR repository, so the preview creates two repositories, ViewTopia and the platform proxy, and `publish-images.sh` builds only those two from the sibling checkouts. ViewTopia is built into ECR because the Carto API key is a build argument and viewtopia's release workflow builds the ghcr image without one.
 
-The GeoLang executor takes 2048 CPU units and 8192 MiB, which covers the two tool runs it allows at once at 3072 MiB each. Its task definition sets all three limits instead of leaving them to the image: `GEOLANG_TOOL_MEMORY_LIMIT_MB` 3072, `GEOLANG_TOOL_MAX_CONCURRENT` 2, and `GEOLANG_TOOL_TIMEOUT_SECONDS` 840.
+The GeoLang executor takes 2048 CPU units and 8192 MiB, which covers the two tool runs it allows at once at 3072 MiB each. Its task definition sets all three limits instead of leaving them to the image: `GEOLANG_TOOL_MEMORY_LIMIT_MB` 3072, `GEOLANG_TOOL_MAX_CONCURRENT` 2, and `GEOLANG_TOOL_TIMEOUT_SECONDS` 300.
 
 Three settings cut the running cost. Tasks run on Fargate Spot with `use_fargate_spot`. They sit in the public subnets with a public IP each, so there is no NAT gateway. The Aurora cluster scales to zero.
 
@@ -123,7 +123,7 @@ geoplumb serves the public STAC layers in [containers/geoplumb/layers.toml](cont
 
 Geokode serves an index directory built by `geokode build`, about 6.5 GB for the planet. The index sits in the tiles bucket under `geokode-index/<geokode_index_version>/`. Each geokode task starts with an init container on `public.ecr.aws/aws-cli/aws-cli:2.37.1` that copies that folder into a task-local volume. Geokode starts only once the copy exits 0, mounts the volume read-only at `/index`, and memory-maps it. The task has 30 GiB of ephemeral storage for the index and both images. Every task start copies the whole index, so after a wake or the morning scale-up geokode answers later than the other services.
 
-The copy uses the shared task role. Its `s3-access` policy already grants read, write, and delete on every `geolang-prod-*` bucket, so every service on that role can read the index and can also overwrite it.
+The copy uses the shared task role. Its `s3-access` policy grants read, write, and delete on every `geolang-prod-*` bucket and denies `s3:PutObject` and `s3:DeleteObject` under `geokode-index/` in the tiles bucket, so every service on that role can read the index and none can overwrite it.
 
 To serve a new index on the preview:
 
@@ -131,8 +131,8 @@ To serve a new index on the preview:
 2. Apply once with `enable_s3_tiles = true` so the tiles bucket exists. The preview profile sets it.
 3. Run `./scripts/publish-geokode-index.sh planet-index <version>`. It reads `geokode_index_url` from Terraform state, uploads every file but `meta.json`, then uploads `meta.json`. It takes no `--profile` flag, so export `AWS_PROFILE=geolang` first.
 4. Tag a geokode release and set `geokode = "ghcr.io/geolang/geokode:<tag>"` in `container_images`. Without that entry the preview creates a geokode ECR repository instead, and the service cannot start until `publish-images.sh` pushes the image under a new `image_tag`.
-5. Set `geokode_index_version = "<version>"` and `enable_geokode = true` in `profiles/preview.tfvars`.
-6. Review `terraform plan -var-file=profiles/preview.tfvars`, then apply it. The apply also rolls the platform proxy, the GeoLang API, and the executor, since their environments gain the geokode route and address.
+5. Set `geokode_index_version = "<version>"` in `profiles/preview.tfvars`. The profile already sets `enable_geokode = true`.
+6. Review `terraform plan -var-file=profiles/preview.tfvars`, then apply it. The apply rolls only geokode, because `geokode_index_version` appears only in the command of its init container.
 
 Validation rejects `enable_geokode = true` with an empty `geokode_index_version` or with `enable_s3_tiles = false`. Publish each build under a new version. The bucket keeps versioning on, so republishing a version keeps the replaced objects as noncurrent versions.
 
@@ -190,11 +190,11 @@ Both alerts go to the `spend_cap_topic_arn` output. Subscribe once after the fir
 aws sns subscribe --topic-arn "$(terraform output -raw spend_cap_topic_arn)" --protocol email --notification-endpoint <you@example.com> --profile geolang
 ```
 
-`geolang_limits` is a map of `GEOLANG_*` names to whole numbers, each passed to geolang-api as an environment variable and left off when 0. The names and their meaning are in the geolang README. The preview caps uploads at 51 MB a request, 50 MB a file, a zip at 100 entries and 200 MB unzipped, and a day at 300 files or 2048 MB overall and 20 files or 200 MB per caller. It caps tool runs at 1200 a day per caller and 10000 overall, one at a time per caller, tool outputs at 500 MB a day per caller, and deletes uploads after 30 days.
+`geolang_limits` is a map of `GEOLANG_*` names to whole numbers, each passed to geolang-api as an environment variable and left off when 0. The names and their meaning are in the geolang README. The preview caps uploads at 51 MB a request, 50 MB a file, a zip at 100 entries and 200 MB unzipped, and a day at 10000 files or 100000 MB overall and 20 files or 200 MB per caller. It caps tool runs at 1200 a day per caller and 600000 overall, one at a time per caller, tool outputs at 500 MB a day per caller, and deletes uploads after 30 days.
 
 `ptolemy_limits` and `tiletopia_limits` are maps of `PTOLEMY_MAX_*` and `TILETOPIA_*` names passed to those services, with their meaning in each repo's README. The preview gives a user 5 workspaces, 20 projects and 200 attachments totalling 200 MB in ptolemy. tiletopia closes public signup at 500 accounts or 30 signups an hour, and locks an account for 15 minutes after 5 failed logins.
 
-`llm_locked_profile` becomes `SIBYL_LOCKED_PROFILE`, so every run uses that model and nobody can switch. `sibyl_limits` is a map of `SIBYL_*` per-user daily limits passed to Sibyl by name, stored in sibyl.db so restarts keep them. The preview locks `cloud:openai.gpt-oss-120b` and allows a user 40 runs and 2 million tokens a day, and an admin, for eval sweeps, 500 runs and 50 million tokens.
+`llm_locked_profile` becomes `SIBYL_LOCKED_PROFILE`, so every run uses that model and nobody can switch. `sibyl_limits` is a map of `SIBYL_*` per-user limits passed to Sibyl by name, stored in sibyl.db so restarts keep them. The preview locks `cloud:openai.gpt-oss-120b` and allows a user 40 runs and 2 million tokens a day and 500000 tokens a UTC calendar month, and an admin, for eval sweeps, 500 runs and 50 million tokens a day with no monthly cap. The monthly figure is the lower of the two, so a user reaches it before the daily token limit.
 
 ## Image build map
 
@@ -247,7 +247,7 @@ terraform init
 terraform plan -var-file=profiles/preview.tfvars
 ```
 
-The first apply must keep `runtime_secrets_ready = false`. It creates the network, the database cluster, EFS access points, ECR repositories, secret containers, task definitions, and zero-count ECS services. `profiles/preview.tfvars` sets the flag to `true` because the preview is running, so set it to `false` for a fresh deployment from that profile.
+The first apply must keep `runtime_secrets_ready = false`. It creates the network, the database cluster, EFS access points, ECR repositories, secret containers, task definitions, and zero-count ECS services. `profiles/preview.tfvars` sets the flag to `true` because the preview's secrets and images already exist, so set it to `false` for a fresh deployment from that profile. That profile also sets `service_defaults.desired_count = 0`, so a fresh deployment starts no task until that value is 1 as well.
 
 On the platform profile the load balancer security group needs the certificate ARN, the certificate needs ACM validation, and validation needs the domain's nameservers delegated at the registrar. Set `existing_hosted_zone_id` to a zone that is already delegated and one apply completes, because validation records go into a zone the registrar already points at.
 
@@ -275,11 +275,11 @@ Do not use `terraform apply -auto-approve` for the readiness transition. A norma
 
 Which path a service takes depends on where its image comes from.
 
-The six ghcr services (Ptolemy, TileTopia, Agora, Sibyl, geodukt, and the GeoLang API and executor from the geolang repo) get a new image from a tag push on their own repo. Each repo's `release.yml` workflow, `docker.yml` in ptolemy, builds and pushes `ghcr.io/geolang/<repo>:<tag>` on any `v*` tag:
+The eight ghcr services (Ptolemy, TileTopia, Agora, Sibyl, geodukt, Geokode, and the GeoLang API and executor from the geolang repo) get a new image from a tag push on their own repo. Each repo's `release.yml` workflow, `docker.yml` in ptolemy, builds and pushes `ghcr.io/geolang/<repo>:<tag>` on any `v*` tag. Use a tag the repo does not hold yet:
 
 ```bash
-git -C ../ptolemy tag v0.2.2
-git -C ../ptolemy push origin v0.2.2
+git -C ../ptolemy tag <new-tag>
+git -C ../ptolemy push origin <new-tag>
 ```
 
 Wait for the workflow to finish, set the new tag on that service in `container_images` in `profiles/preview.tfvars`, then apply:
@@ -292,13 +292,20 @@ ViewTopia and the platform proxy are built into ECR by `publish-images.sh`. Expo
 
 ```bash
 export VITE_CARTO_API_KEY=...
-./scripts/publish-images.sh v0.1.6
+./scripts/publish-images.sh <new-tag>
 terraform apply -var-file=profiles/preview.tfvars
 ```
 
 `image_tag` is one value for both ECR images, so publishing rolls both even when only one changed. Either apply replaces the task definition and ECS rolls the service. Do not apply near 23:00 America/Toronto. The nightly scale-down fires on schedule even with a rollout in flight.
 
 ## Scaling the preview up and down
+
+The preview is paused. `profiles/preview.tfvars` sets `service_defaults.desired_count = 0`, so every service gets a desired count of 0 from Terraform, the morning schedule, and the wake function, and no task runs. To resume:
+
+1. With the services still at 0, run the F17 and F18 rollout under Demo hardening in `viewtopia/DESIGN_TODO.md` as far as its master password rotation. The rollout moves Ptolemy to its `ptolemy_app` role. Then do the open item in the same file that rotates `PLATFORM_JWT_SECRET` and the provider keys.
+2. Set `service_defaults.desired_count = 1` in `profiles/preview.tfvars`.
+3. Between 08:00 and 23:00 Toronto time, review `terraform plan -var-file=profiles/preview.tfvars`, then apply it. Every service starts during the apply. Outside those hours the idle scale-down stops a stack with no chat activity.
+4. Run the last check of the rollout: create a Ptolemy topology with `POST /api/v1/datasets/{id}/topologies`, and do an upload. The Data API `DO` block and the 13 extensions in that rollout item stay unverified until this check passes.
 
 Once the services are running, the cost of an idle stack is the load balancer, the CloudFront distribution, EFS, and whatever the tasks use. `scripts/platform-scale.sh` sets every service on the cluster to a desired count of 0 or 1 without a Terraform run:
 
@@ -307,11 +314,11 @@ Once the services are running, the cost of an idle stack is the load balancer, t
 ./scripts/platform-scale.sh up --profile geolang
 ```
 
-It reads the cluster name from `terraform output -raw ecs_cluster`, lists the cluster's services, and prints one line per service. It accepts nothing but `up`, `down`, and an optional `--profile`.
+It reads the cluster name from `terraform output -raw ecs_cluster`, lists the cluster's services, and prints one line per service. It accepts nothing but `up`, `down`, and an optional `--profile`. `up` always sets a desired count of 1, so it starts the services on a paused stack. The first of these then sets every service back to 0: any `terraform apply`, the morning schedule at 08:00, a press of the demo start button, the nightly scale-down at 23:00, or the idle scale-down.
 
-`nightly_scale_down` does the down half on a schedule. Set a timezone and an hour and each service gets an EventBridge schedule that calls `ecs:UpdateService` with a desired count of 0 at that local hour. The preview profile uses 23:00 America/Toronto. The tasks stop, the cluster pauses five minutes later, and `platform-scale.sh up` or a Terraform apply brings both back.
+`nightly_scale_down` does the down half on a schedule. Set a timezone and an hour and each service gets an EventBridge schedule that calls `ecs:UpdateService` with a desired count of 0 at that local hour. The preview profile uses 23:00 America/Toronto. The tasks stop and the cluster pauses five minutes later. `platform-scale.sh up` brings both back, and so does a Terraform apply while `service_defaults.desired_count` is 1. With that value at 0, an apply sets every service to 0.
 
-A second schedule per service does the up half at `morning_scale_up_hour` in the same timezone, 08:00 by default, so the preview runs from 08:00 to 23:00 Toronto time. It sets the desired count Terraform gives the service, which is 0 while `runtime_secrets_ready` is false. The morning schedule also undoes a manual scale-down. To keep the stack stopped through an absence, set `service_defaults.desired_count = 0` and apply: the schedules and the wake function then start nothing, and setting it back to 1 and applying resumes.
+A second schedule per service does the up half at `morning_scale_up_hour` in the same timezone, 08:00 by default, so a resumed preview runs from 08:00 to 23:00 Toronto time. It sets the desired count Terraform gives the service, which is 0 while `runtime_secrets_ready` is false or `service_defaults.desired_count` is 0. The morning schedule also undoes a manual scale-down, so keeping the stack stopped through an absence takes the pause above: `service_defaults.desired_count = 0` and an apply.
 
 ## Demo landing page
 
@@ -326,6 +333,8 @@ The flag needs `enable_cdn`, `enable_geolang`, and `nightly_scale_down`.
 1. The start button copies the prompt to the clipboard and sends a POST to the `geolang-prod-demo-wake` function URL.
 2. The function adds one data point to the `DemoActivity` metric in the `GeoLang/geolang-prod` namespace, then sets every service to the desired count Terraform gives it. That is the same `ecs:UpdateService` call `platform-scale.sh up` makes.
 3. The page requests `/health`, `/agent/health`, and `/` every ten seconds. When all three answer 200 it opens the viewer. The start takes two to three minutes and the page gives up after ten.
+
+While the preview is paused the button starts nothing. The function sets every service to 0, and after ten minutes the page shows "The demo did not come up within ten minutes. Try again later."
 
 The function URL takes no authentication, so anyone who reads `config.json` can start the stack. Its CORS setting admits only the platform origin, which stops other sites calling it from a browser but not a script.
 
@@ -367,8 +376,9 @@ The proxy preserves or strips paths according to the current platform compose co
 - `/agora/*` to Agora with `/agora` removed
 - `/plumb/*` to geoplumb with `/plumb` removed
 - `/api/geocode/*` to Geokode with the prefix removed
-- `/api/v1/auth/oidc/*`, remaining `/api/*`, and `/ws/*` to Ptolemy
+- `/api/v1/auth/oidc/*` and remaining `/api/*` to Ptolemy
 - TileTopia auth, portal, assets, terrain, and catalog paths to TileTopia
+- `/v1/assets*` and `/tiletopia_ion_uploads/*` to TileTopia with the path preserved, for Ion clients and Ion uploads
 - `/jupyter/*` to Jupyter with the path preserved
 - `/collecta`, `/collecta/*`, `/speech`, and `/speech/*` to the undeployed-service 501 response. The Caddyfile has aavaaz handles for `/speech/*` behind `ENABLE_AAVAAZ`, which Terraform never sets.
 - `/health` to the proxy's own `ok`, which is what the load balancer target group checks
@@ -377,11 +387,13 @@ The proxy preserves or strips paths according to the current platform compose co
 
 Every service route is gated on an `ENABLE_*` environment variable that Terraform sets from the profile's service toggles. A profile that leaves a service out answers 501 on that service's paths instead of proxying to a Cloud Map name that does not resolve. The gates default to closed, so the proxy serves a route only when the deployment names the service.
 
-Paths under `/api` need one more step, because Ptolemy's `/api/*` catch-all would otherwise take them and answer 404. After the per-service handles, the proxy matches the Geokode, Interiora, Itinera, geodukt, and TileTopia `/api` paths again and returns 501 for any of them a closed gate left unhandled. On the preview that covers `/api/geocode/*`, `/api/indoor/*`, `/api/delivery/*`, `/api/route*`, `/api/isochrone*`, and `/api/network/*`. `/api/v1/auth/*` is left out of that second match on purpose. It goes to TileTopia when TileTopia runs and falls through to Ptolemy when it does not, since Ptolemy serves the platform's auth routes itself.
+Paths under `/api` need one more step, because Ptolemy's `/api/*` catch-all would otherwise take them and answer 404. After the per-service handles, the proxy matches the Geokode, Interiora, Itinera, geodukt, and TileTopia `/api` paths again and returns 501 for any of them a closed gate left unhandled. On the preview that covers `/api/indoor/*`, `/api/delivery/*`, `/api/route*`, `/api/isochrone*`, and `/api/network/*`. `/api/v1/auth/*` is left out of that second match on purpose. It goes to TileTopia when TileTopia runs and falls through to Ptolemy when it does not, since Ptolemy serves the platform's auth routes itself.
 
 The minimal profile runs TileTopia, GeoLang API, ViewTopia, and the proxy, so its Collecta, speech, Fenestra, Agora, geoplumb, Jupyter, Geokode, Itinera, Interiora, geodukt, and Ptolemy paths all return 501. Its `/martin/*` paths reach TileTopia along with the rest of its tile paths. When Ptolemy runs and TileTopia does not, TileTopia's portal, assets, terrain, catalog, and realtime paths answer 501.
 
-CloudFront has zero-cache behaviors for the TileTopia, Ptolemy, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths (`/tiles/v1/assets/*/tileset.json`, `/tiles/v1/assets/*/tiles/*`, `/tiles/v1/terrain/*`) keep long TTLs. Those are the URLs the viewer requests, and the proxy rewrites them to TileTopia after CloudFront.
+CloudFront has zero-cache behaviors for the TileTopia, Agora, and Jupyter WebSocket paths. It forwards the WebSocket subprotocol header used for bearer authentication. Static frontend assets and public immutable tile paths (`/tiles/v1/assets/*/tileset.json`, `/tiles/v1/assets/*/tiles/*`, `/tiles/v1/terrain/*`) keep long TTLs. Those are the URLs the viewer requests, and the proxy rewrites them to TileTopia after CloudFront.
+
+The TileTopia task sets `TILETOPIA_ION_BASE_URL` to the same origin as `terraform output platform_url`: the domain, else the CloudFront hostname, else the load balancer name. TileTopia starts its WMTS and TMS URLs, Ion answers, and Ion upload location with it. Those paths take CloudFront's default behavior with a TTL of 0. It accepts every method and forwards the query string and the `Host` and `Authorization` headers, and CloudFront's legacy cache settings forward the `x-amz-*` headers, so an upload's Signature V4 reaches TileTopia. A new Caddyfile needs `publish-images.sh` and an apply. The apply also rolls TileTopia.
 
 When `enable_cdn` is true, the load balancer admits only the AWS-managed `com.amazonaws.global.cloudfront.origin-facing` prefix list, so the CDN cannot be bypassed by calling the load balancer name directly. That list admits every CloudFront distribution in every account, so CloudFront also sends an `X-Origin-Verify` header with a random value Terraform generates and keeps in state, and the listener rule forwards to the proxy only when the header matches. A request without it gets the listener default response. Target health checks go from the load balancer to the tasks directly and do not need the header. That prefix list counts as 55 of a security group's 60 rules, which leaves room for one port. The admitted port is 443 when a domain is configured, because CloudFront then reaches the origin over HTTPS, and 80 otherwise. Without a CDN the load balancer is the only way in and stays open.
 

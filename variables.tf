@@ -330,7 +330,7 @@ variable "geolang_limits" {
 }
 
 variable "sibyl_limits" {
-  description = "Numeric SIBYL_* per-user daily limits passed to Sibyl by name, whole numbers, 0 or a missing key means no limit"
+  description = "Numeric SIBYL_* per-user daily and monthly limits passed to Sibyl by name, whole numbers, 0 or a missing key means no limit"
   type        = map(number)
   default     = {}
 

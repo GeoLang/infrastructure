@@ -18,7 +18,7 @@
 
 		# the /api/* style handles below only match the slashed form, so send the
 		# bare prefix down the same route
-		@bare_prefix path /agent /tiles /martin /ogc /agora /plumb /jupyter /collecta /speech /api /ws /api/geocode /api/indoor /api/delivery
+		@bare_prefix path /agent /tiles /martin /ogc /agora /plumb /jupyter /collecta /speech /api /api/geocode /api/indoor /api/delivery
 		rewrite @bare_prefix {path}/
 
 		@agent {
@@ -168,7 +168,7 @@
 
 		@tiletopia {
 			expression {$ENABLE_TILETOPIA:false}
-			path /api/v1/auth/* /api/v1/portal/* /api/v1/assets /api/v1/assets/* /api/v1/terrain/* /api/v1/catalog /api/v1/catalog/*
+			path /api/v1/auth/* /api/v1/portal/* /api/v1/assets /api/v1/assets/* /api/v1/terrain/* /api/v1/catalog /api/v1/catalog/* /v1/assets /v1/assets/* /v1/change-reports /v1/change-reports/* /tiletopia_ion_uploads/*
 		}
 		handle @tiletopia {
 			reverse_proxy tiletopia.{$SERVICE_DISCOVERY_NAMESPACE}:3000
@@ -182,7 +182,7 @@
 
 		@ptolemy {
 			expression {$ENABLE_PTOLEMY:false}
-			path /api/* /ws/*
+			path /api/*
 		}
 		handle @ptolemy {
 			reverse_proxy ptolemy.{$SERVICE_DISCOVERY_NAMESPACE}:3000
@@ -202,7 +202,7 @@
 
 		# anything still carrying a platform prefix here belongs to a service this
 		# deployment does not run
-		@undeployed path /agent/* /tiles/* /martin/* /ogc/* /agora/* /plumb/* /jupyter/* /collecta/* /speech/* /api/* /ws/*
+		@undeployed path /agent/* /tiles/* /martin/* /ogc/* /agora/* /plumb/* /jupyter/* /collecta/* /speech/* /api/* /v1/assets /v1/assets/* /v1/change-reports /v1/change-reports/* /tiletopia_ion_uploads/*
 		handle @undeployed {
 			error "this deployment does not run the service that serves this path" 501
 		}

@@ -291,36 +291,6 @@ resource "aws_cloudfront_distribution" "main" {
     max_ttl     = 0
   }
 
-  # ptolemy's websockets: /ws/branches/{id} and /ws/rooms/{id}. Same handshake
-  # forwarding as realtime above, and for the same reason: ptolemy classifies
-  # /ws/* as authenticated and takes the token from either the Authorization
-  # header or the bearer subprotocol, so that header has to reach the origin.
-  ordered_cache_behavior {
-    path_pattern           = "/ws/*"
-    allowed_methods        = ["GET", "HEAD", "OPTIONS"]
-    cached_methods         = ["GET", "HEAD"]
-    target_origin_id       = "alb"
-    viewer_protocol_policy = "https-only"
-
-    forwarded_values {
-      query_string = false
-      headers = [
-        "Sec-WebSocket-Protocol",
-        "Sec-WebSocket-Key",
-        "Sec-WebSocket-Version",
-        "Sec-WebSocket-Extensions",
-        "Authorization",
-        "Origin",
-        "Host",
-      ]
-      cookies { forward = "none" }
-    }
-
-    min_ttl     = 0
-    default_ttl = 0
-    max_ttl     = 0
-  }
-
   # Agora uses a WebSocket under /agora/ws. Its bearer token can arrive in the
   # WebSocket subprotocol, so the handshake headers must reach the proxy.
   ordered_cache_behavior {

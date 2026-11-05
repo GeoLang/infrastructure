@@ -339,6 +339,7 @@ module "ecs" {
             { name = "TILETOPIA_PORT", value = "3000" },
             { name = "TILETOPIA_HOST", value = "0.0.0.0" },
             { name = "TILETOPIA_DATA_DIR", value = "/data" },
+            { name = "TILETOPIA_ION_BASE_URL", value = local.platform_origin },
             { name = "RUST_LOG", value = "info,tiletopia=debug" },
             { name = "AWS_REGION", value = var.aws_region },
           ],
